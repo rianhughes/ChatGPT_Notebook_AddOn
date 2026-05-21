@@ -13,6 +13,7 @@ const BOUND_ATTRIBUTE = "data-cgpt-notes-bound";
 const ACTION_ATTRIBUTE = "data-cgpt-notes-action";
 const OVERLAY_CLASS = "cgpt-notes-capture";
 const BUTTON_CLASS = "cgpt-notes-save-button";
+const BUTTON_ICON_CLASS = "cgpt-notes-save-button-icon";
 const SELECTION_POPOVER_CLASS = "cgpt-notes-selection-popover";
 const EXPORT_LABEL = "Export to ChatGPT Note";
 
@@ -152,7 +153,7 @@ function createSelectionButton(): HTMLButtonElement {
 
   button.type = "button";
   button.className = `${BUTTON_CLASS} ${SELECTION_POPOVER_CLASS}`;
-  button.textContent = EXPORT_LABEL;
+  setButtonContent(button);
   button.title = "Export selected text to ChatGPT Notes";
   button.setAttribute("aria-label", "Export selected text to ChatGPT Notes");
   button.setAttribute(ACTION_ATTRIBUTE, "export-selection");
@@ -175,7 +176,7 @@ function attachButton(container: HTMLElement): void {
   wrapper.className = OVERLAY_CLASS;
   button.type = "button";
   button.className = BUTTON_CLASS;
-  button.textContent = EXPORT_LABEL;
+  setButtonContent(button);
   button.title = "Export message to ChatGPT Notes";
   button.setAttribute("aria-label", "Export message to ChatGPT Notes");
   button.setAttribute(ACTION_ATTRIBUTE, "export-message");
@@ -195,7 +196,7 @@ async function saveContainerMessage(container: HTMLElement, button: HTMLButtonEl
 
   button.disabled = true;
   button.classList.remove("has-error");
-  button.textContent = EXPORT_LABEL;
+  setButtonContent(button);
   let exported = false;
 
   try {
@@ -233,7 +234,7 @@ async function saveSelectedMessage(button: HTMLButtonElement): Promise<void> {
 
   button.disabled = true;
   button.classList.remove("has-error");
-  button.textContent = EXPORT_LABEL;
+  setButtonContent(button);
   let exported = false;
 
   try {
@@ -281,7 +282,7 @@ function updateSelectionButton(button: HTMLButtonElement): void {
 
   button.classList.remove("is-saved", "has-error");
   button.disabled = false;
-  button.textContent = EXPORT_LABEL;
+  setButtonContent(button);
   button.style.left = `${Math.min(window.innerWidth - 16, Math.max(8, rect.left + rect.width / 2))}px`;
   button.style.top = `${Math.max(8, rect.top - 42)}px`;
   button.style.display = "inline-flex";
@@ -311,14 +312,29 @@ function hideSelectionButton(button: HTMLButtonElement): void {
 
 function resetExportButton(button: HTMLButtonElement): void {
   button.classList.remove("is-saved", "has-error");
-  button.textContent = EXPORT_LABEL;
+  setButtonContent(button);
 }
 
 function setButtonError(button: HTMLButtonElement): void {
   button.classList.add("has-error");
   button.classList.remove("is-saved");
-  button.textContent = EXPORT_LABEL;
+  setButtonContent(button);
   button.disabled = false;
+}
+
+function setButtonContent(button: HTMLButtonElement): void {
+  button.replaceChildren();
+
+  const icon = document.createElement("img");
+  icon.className = BUTTON_ICON_CLASS;
+  icon.src = browser.runtime.getURL("icon.png");
+  icon.alt = "";
+  icon.setAttribute("aria-hidden", "true");
+
+  const label = document.createElement("span");
+  label.textContent = EXPORT_LABEL;
+
+  button.append(icon, label);
 }
 
 function createExportSourceMessageKey(baseKey: string): string {
