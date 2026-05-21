@@ -1,0 +1,44 @@
+.cgpt-notes-capture {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: 6px;
+  vertical-align: middle;
+}
+
+.cgpt-notes-save-button {
+  border: 1px solid rgba(20, 108, 114, 0.42);
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: #fffefa;
+  color: #146c72;
+  cursor: pointer;
+  font: 600 12px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  white-space: nowrap;
+}
+
+.cgpt-notes-save-button:hover {
+  background: #e8f0ec;
+}
+
+.cgpt-notes-save-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.cgpt-notes-save-button.is-saved {
+  border-color: rgba(20, 108, 114, 0.24);
+  background: #146c72;
+  color: #ffffff;
+}
+
+.cgpt-notes-save-button.has-error {
+  border-color: rgba(157, 47, 47, 0.42);
+  color: #9d2f2f;
+}
+
+.cgpt-notes-selection-popover {
+  position: fixed;
+  z-index: 2147483647;
+  transform: translateX(-50%);
+  box-shadow: 0 8px 22px rgba(20, 24, 26, 0.18);
+}

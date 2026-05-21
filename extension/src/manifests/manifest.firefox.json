@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Notes Sidebar",
+  "version": "0.1.0",
+  "permissions": ["storage", "tabs", "clipboardWrite"],
+  "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "sidebar_action": {
+    "default_title": "ChatGPT Notes",
+    "default_panel": "sidebar.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["content.js"],
+      "css": ["injected.css"]
+    }
+  ],
+  "action": {
+    "default_title": "Open ChatGPT Notes"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "chatgpt-notes-sidebar@example.local"
+    }
+  }
+}
