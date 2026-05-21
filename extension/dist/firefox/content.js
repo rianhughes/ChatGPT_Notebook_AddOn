@@ -1372,9 +1372,10 @@ ${fence}`;
     "[data-message-author-role]",
     "[data-testid^='conversation-turn-']"
   ];
+  const TEMPORARY_THREAD_STORAGE_KEY = "chatgpt-notes-temporary-thread-id";
   const ROLE_VALUES = /* @__PURE__ */ new Set(["assistant", "user", "system"]);
   function getCurrentChatGptConversation() {
-    const sourceThreadId = parseChatGptConversationId(window.location.href);
+    const sourceThreadId = parseChatGptConversationId(window.location.href) ?? getTemporaryChatGptThreadId();
     if (!sourceThreadId) {
       return null;
     }
@@ -1383,6 +1384,26 @@ ${fence}`;
       title: document.title.replace(/\s*-\s*ChatGPT\s*$/i, "").trim() || "ChatGPT conversation",
       url: window.location.href
     };
+  }
+  function getTemporaryChatGptThreadId() {
+    var _a, _b;
+    if (!isChatGptUrl(window.location.href)) {
+      return null;
+    }
+    try {
+      const existing = window.sessionStorage.getItem(TEMPORARY_THREAD_STORAGE_KEY);
+      if (existing) {
+        return existing;
+      }
+      const next = `temporary:${((_b = (_a = globalThis.crypto) == null ? void 0 : _a.randomUUID) == null ? void 0 : _b.call(_a)) ?? createTemporaryThreadSuffix()}`;
+      window.sessionStorage.setItem(TEMPORARY_THREAD_STORAGE_KEY, next);
+      return next;
+    } catch {
+      return `temporary:${createTemporaryThreadSuffix()}`;
+    }
+  }
+  function createTemporaryThreadSuffix() {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
   function findConversationRoot() {
     return document.querySelector("main") ?? document.body;
@@ -1778,7 +1799,10 @@ ${fence}`;
   }
   let controller = null;
   let lastConversationId = null;
-  bootstrap();
+  if (!window.__chatGptNotesContentScriptStarted) {
+    window.__chatGptNotesContentScriptStarted = true;
+    bootstrap();
+  }
   function bootstrap() {
     addRuntimeMessageListener((rawMessage) => {
       if (!isExtensionMessage(rawMessage) || rawMessage.type !== "INSERT_TEXT_IN_CHATGPT") {

@@ -1,0 +1,78 @@
+# Chrome Support Plan
+
+Goal: finish and verify Chrome support for the existing Firefox-first ChatGPT Notes Sidebar extension.
+
+Verified current state:
+
+- `npm test` passes: 11 test files, 46 tests.
+- `extension/package.json` already has `build:chrome`.
+- `extension/scripts/build.mjs` already supports `BROWSER_TARGET=chrome`.
+- `extension/src/manifests/manifest.chrome.json` already uses `sidePanel`, `service_worker`, and `side_panel.default_path`.
+- `extension/src/background/sidebarAdapter.chrome.ts` already calls `setPanelBehavior({ openPanelOnActionClick: true })`.
+- README still says Chrome is unsupported.
+
+Main issue to fix:
+
+- `extension/src/background/sidebarAdapter.chrome.ts` calls `sidePanel.open()` without options.
+- Chrome requires `chrome.sidePanel.open({ windowId })` or `chrome.sidePanel.open({ tabId })`.
+- `extension/src/background/background.ts` currently ignores the clicked action tab, so it cannot pass `tab.windowId` into the adapter.
+
+Implementation checklist:
+
+1. Update `SidebarAdapter.openForCurrentWindow` in `extension/src/background/sidebarAdapter.ts`.
+   - Let it accept optional context, probably `{ windowId?: number; tabId?: number }`.
+   - Firefox can ignore the context.
+   - Chrome should use the context to call `sidePanel.open`.
+
+2. Update `extension/src/background/background.ts`.
+   - Change the action click listener to accept the clicked tab.
+   - Pass `tab.windowId` or `tab.id` into `sidebarAdapter.openForCurrentWindow`.
+   - Keep failures non-fatal, because Chrome may already open the panel through `openPanelOnActionClick`.
+
+3. Update `extension/src/background/sidebarAdapter.chrome.ts`.
+   - Keep `setPanelBehavior({ openPanelOnActionClick: true })`.
+   - Call `sidePanel.open({ windowId })` only when a valid `windowId` is available.
+   - Optionally skip explicit `open()` entirely for action clicks and rely on `setPanelBehavior`.
+
+4. Update `extension/src/background/sidebarAdapter.firefox.ts`.
+   - Match the updated adapter interface.
+   - Keep Firefox behavior unchanged.
+
+5. Tighten `extension/src/manifests/manifest.chrome.json`.
+   - Add `"minimum_chrome_version": "116"` if using `sidePanel.open()`.
+   - Keep existing permissions unless testing proves another permission is needed.
+
+6. Add tests.
+   - Test Chrome adapter calls `setPanelBehavior`.
+   - Test Chrome adapter calls `open({ windowId })` when provided.
+   - Test Firefox adapter still calls `sidebarAction.open()`.
+   - Add a small background action test if mocking the action listener is clean.
+
+7. Build and verify.
+   - Run `npm test`.
+   - Run `npm run build:chrome`.
+   - Run `npm run build:firefox`.
+   - Load `extension/dist/chrome` via `chrome://extensions`.
+   - Confirm no manifest or service worker errors.
+
+8. Manual Chrome checklist.
+   - Toolbar action opens the Chrome side panel.
+   - Sidebar UI renders.
+   - ChatGPT content buttons inject on `https://chatgpt.com/*`.
+   - Saving a message creates or updates the correct notebook.
+   - Sidebar refreshes and shows saved notes.
+   - Copy works.
+   - Insert into ChatGPT works.
+   - Export works.
+   - Delete, merge, and reorder work.
+   - Data persists after closing and reopening Chrome.
+
+9. Update docs after verification.
+   - Replace README's "Chrome is not supported yet" note.
+   - Add Chrome development install instructions.
+   - Update `Todo.txt` only after Chrome is manually verified.
+
+References:
+
+- Chrome Side Panel API: https://developer.chrome.com/docs/extensions/reference/api/sidePanel
+- Chrome extension storage/service worker notes: https://developer.chrome.com/docs/extensions/develop/concepts/storage-and-cookies

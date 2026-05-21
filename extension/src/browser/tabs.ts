@@ -5,6 +5,16 @@ import { isChatGptUrl, parseChatGptConversationId } from "../core/threadIdentity
 
 const CHATGPT_MATCH_PATTERNS = ["https://chatgpt.com/*", "https://chat.openai.com/*"];
 
+type ScriptableTab = {
+  id?: number;
+  url?: string;
+};
+
+type ScriptingApi = {
+  executeScript?: (details: { target: { tabId: number }; files: string[] }) => Promise<unknown>;
+  insertCSS?: (details: { target: { tabId: number }; files: string[] }) => Promise<unknown>;
+};
+
 export async function getActiveChatGptContext(): Promise<ChatGptContext | null> {
   const tabs = await browser.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
@@ -59,4 +69,30 @@ export async function sendMessageToActiveChatGptTab<TResponse>(
   } catch {
     return null;
   }
+}
+
+export async function ensureChatGptContentScript(tab: ScriptableTab): Promise<void> {
+  if (!tab.id || !tab.url || !isChatGptUrl(tab.url)) {
+    return;
+  }
+
+  const scripting = (browser as unknown as { scripting?: ScriptingApi }).scripting;
+
+  if (!scripting?.executeScript) {
+    return;
+  }
+
+  try {
+    await scripting.insertCSS?.({
+      target: { tabId: tab.id },
+      files: ["injected.css"],
+    });
+  } catch {
+    // The declared content script may already have inserted the stylesheet.
+  }
+
+  await scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["content.js"],
+  });
 }

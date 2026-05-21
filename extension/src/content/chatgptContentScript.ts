@@ -4,10 +4,19 @@ import { insertTextIntoChatGptComposer } from "./chatgptComposerAdapter";
 import { getCurrentChatGptConversation } from "./chatgptDomAdapter";
 import { startMessageCaptureOverlay, type OverlayController } from "./messageCaptureOverlay";
 
+declare global {
+  interface Window {
+    __chatGptNotesContentScriptStarted?: boolean;
+  }
+}
+
 let controller: OverlayController | null = null;
 let lastConversationId: string | null = null;
 
-bootstrap();
+if (!window.__chatGptNotesContentScriptStarted) {
+  window.__chatGptNotesContentScriptStarted = true;
+  bootstrap();
+}
 
 function bootstrap(): void {
   addRuntimeMessageListener((rawMessage: unknown) => {

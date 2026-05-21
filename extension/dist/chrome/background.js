@@ -1054,6 +1054,27 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       return null;
     }
   }
+  async function ensureChatGptContentScript(tab) {
+    var _a2;
+    if (!tab.id || !tab.url || !isChatGptUrl(tab.url)) {
+      return;
+    }
+    const scripting = browser.scripting;
+    if (!(scripting == null ? void 0 : scripting.executeScript)) {
+      return;
+    }
+    try {
+      await ((_a2 = scripting.insertCSS) == null ? void 0 : _a2.call(scripting, {
+        target: { tabId: tab.id },
+        files: ["injected.css"]
+      }));
+    } catch {
+    }
+    await scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["content.js"]
+    });
+  }
   function isExtensionMessage(value) {
     if (!isRecord(value) || typeof value.type !== "string" || !isRecord(value.payload)) {
       return false;
@@ -4398,11 +4419,24 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         var _a2;
         await ((_a2 = sidePanel == null ? void 0 : sidePanel.setPanelBehavior) == null ? void 0 : _a2.call(sidePanel, { openPanelOnActionClick: true }));
       },
-      async openForCurrentWindow() {
+      async openForCurrentWindow(context) {
         var _a2;
-        await ((_a2 = sidePanel == null ? void 0 : sidePanel.open) == null ? void 0 : _a2.call(sidePanel));
+        const openOptions = getOpenOptions(context);
+        if (!openOptions) {
+          return;
+        }
+        await ((_a2 = sidePanel == null ? void 0 : sidePanel.open) == null ? void 0 : _a2.call(sidePanel, openOptions));
       }
     };
+  }
+  function getOpenOptions(context) {
+    if (typeof (context == null ? void 0 : context.windowId) === "number") {
+      return { windowId: context.windowId };
+    }
+    if (typeof (context == null ? void 0 : context.tabId) === "number") {
+      return { tabId: context.tabId };
+    }
+    return null;
   }
   function createSidebarAdapter() {
     {
@@ -4412,8 +4446,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   const sidebarAdapter = createSidebarAdapter();
   void sidebarAdapter.initialize();
   const actionApi = browser.action ?? browser.browserAction;
-  (_a = actionApi == null ? void 0 : actionApi.onClicked) == null ? void 0 : _a.addListener(() => {
-    void sidebarAdapter.openForCurrentWindow();
+  (_a = actionApi == null ? void 0 : actionApi.onClicked) == null ? void 0 : _a.addListener((tab) => {
+    void openSidebarFromActionClick(tab);
   });
   browser.runtime.onMessage.addListener((rawMessage) => {
     if (!isExtensionMessage(rawMessage)) {
@@ -4476,6 +4510,21 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         return void 0;
       default:
         return void 0;
+    }
+  }
+  async function openSidebarFromActionClick(tab) {
+    if (tab) {
+      try {
+        await ensureChatGptContentScript(tab);
+      } catch {
+      }
+    }
+    try {
+      await sidebarAdapter.openForCurrentWindow({
+        windowId: tab == null ? void 0 : tab.windowId,
+        tabId: tab == null ? void 0 : tab.id
+      });
+    } catch {
     }
   }
 })();

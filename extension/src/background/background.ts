@@ -1,6 +1,7 @@
 import browser from "../browser/extensionApi";
 import {
   broadcastToChatGptTabs,
+  ensureChatGptContentScript,
   getActiveChatGptContext,
   sendMessageToActiveChatGptTab,
 } from "../browser/tabs";
@@ -18,9 +19,15 @@ import {
 } from "../core/repository";
 import { createSidebarAdapter } from "./sidebarAdapter";
 
+type ActionClickTab = {
+  id?: number;
+  url?: string;
+  windowId?: number;
+};
+
 type ActionApi = {
   onClicked?: {
-    addListener(listener: () => void): void;
+    addListener(listener: (tab?: ActionClickTab) => void): void;
   };
 };
 
@@ -31,8 +38,8 @@ void sidebarAdapter.initialize();
 const actionApi = ((browser as unknown as { action?: ActionApi; browserAction?: ActionApi }).action ??
   (browser as unknown as { browserAction?: ActionApi }).browserAction) as ActionApi | undefined;
 
-actionApi?.onClicked?.addListener(() => {
-  void sidebarAdapter.openForCurrentWindow();
+actionApi?.onClicked?.addListener((tab) => {
+  void openSidebarFromActionClick(tab);
 });
 
 browser.runtime.onMessage.addListener((rawMessage: unknown) => {
@@ -104,5 +111,24 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       return undefined;
     default:
       return undefined;
+  }
+}
+
+async function openSidebarFromActionClick(tab?: ActionClickTab): Promise<void> {
+  if (tab) {
+    try {
+      await ensureChatGptContentScript(tab);
+    } catch {
+      // The active tab may not allow script injection, or the script may already be present.
+    }
+  }
+
+  try {
+    await sidebarAdapter.openForCurrentWindow({
+      windowId: tab?.windowId,
+      tabId: tab?.id,
+    });
+  } catch {
+    // Chrome can already open the side panel via setPanelBehavior.
   }
 }

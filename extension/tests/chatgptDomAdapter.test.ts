@@ -4,6 +4,7 @@ import {
   extractMessageFromContainer,
   extractSelectionFromDocument,
   findVisibleMessageContainers,
+  getCurrentChatGptConversation,
 } from "../src/content/chatgptDomAdapter";
 
 describe("chatgptDomAdapter", () => {
@@ -11,6 +12,7 @@ describe("chatgptDomAdapter", () => {
     window.history.pushState({}, "", "/c/test-conversation");
     document.title = "Useful chat - ChatGPT";
     document.body.innerHTML = "";
+    window.sessionStorage.clear();
   });
 
   it("extracts role, source ID, thread ID, and normalized text", () => {
@@ -98,6 +100,28 @@ describe("chatgptDomAdapter", () => {
 
     expect(extracted?.sourceMessageId).toBeNull();
     expect(extracted?.sourceMessageKey.startsWith("content:")).toBe(true);
+  });
+
+  it("creates a temporary thread for unsaved ChatGPT pages without a conversation id", () => {
+    window.history.pushState({}, "", "/?utm_source=google");
+    document.title = "ChatGPT";
+    document.body.innerHTML = `
+      <main>
+        <div data-message-author-role="assistant" data-message-id="msg-root">
+          <div class="markdown">
+            <p>Root page response</p>
+          </div>
+        </div>
+      </main>
+    `;
+
+    const context = getCurrentChatGptConversation();
+    const [container] = findVisibleMessageContainers();
+    const extracted = extractMessageFromContainer(container);
+
+    expect(context?.sourceThreadId.startsWith("temporary:")).toBe(true);
+    expect(extracted?.sourceThreadId).toBe(context?.sourceThreadId);
+    expect(extracted?.contentText).toBe("Root page response");
   });
 
   it("deduplicates ChatGPT turn wrappers so toolbar controls are not treated as messages", () => {

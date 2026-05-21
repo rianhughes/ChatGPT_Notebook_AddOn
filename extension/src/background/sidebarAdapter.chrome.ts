@@ -1,9 +1,9 @@
 import browser from "../browser/extensionApi";
-import type { SidebarAdapter } from "./sidebarAdapter";
+import type { SidebarAdapter, SidebarOpenContext } from "./sidebarAdapter";
 
 type ChromeSidePanel = {
   setPanelBehavior?: (details: { openPanelOnActionClick: boolean }) => Promise<void>;
-  open?: (details?: { windowId?: number }) => Promise<void>;
+  open?: (details: { windowId?: number; tabId?: number }) => Promise<void>;
 };
 
 export function createChromeSidebarAdapter(): SidebarAdapter {
@@ -13,8 +13,26 @@ export function createChromeSidebarAdapter(): SidebarAdapter {
     async initialize() {
       await sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true });
     },
-    async openForCurrentWindow() {
-      await sidePanel?.open?.();
+    async openForCurrentWindow(context?: SidebarOpenContext) {
+      const openOptions = getOpenOptions(context);
+
+      if (!openOptions) {
+        return;
+      }
+
+      await sidePanel?.open?.(openOptions);
     },
   };
+}
+
+function getOpenOptions(context?: SidebarOpenContext): { windowId?: number; tabId?: number } | null {
+  if (typeof context?.windowId === "number") {
+    return { windowId: context.windowId };
+  }
+
+  if (typeof context?.tabId === "number") {
+    return { tabId: context.tabId };
+  }
+
+  return null;
 }

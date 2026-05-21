@@ -1,6 +1,6 @@
 import { contentHashFromParts, sourceMessageKeyFromParts } from "../core/hash";
 import type { MessageRole, SaveChatGptMessageInput } from "../core/models";
-import { parseChatGptConversationId } from "../core/threadIdentity";
+import { isChatGptUrl, parseChatGptConversationId } from "../core/threadIdentity";
 import {
   extractMarkdownFromNode,
   extractMarkdownFromRange,
@@ -12,6 +12,7 @@ const MESSAGE_CONTAINER_SELECTORS = [
   "[data-testid^='conversation-turn-']",
 ];
 
+const TEMPORARY_THREAD_STORAGE_KEY = "chatgpt-notes-temporary-thread-id";
 const ROLE_VALUES = new Set<MessageRole>(["assistant", "user", "system"]);
 
 export type ChatGptExtractedMessage = SaveChatGptMessageInput & {
@@ -24,7 +25,7 @@ export function getCurrentChatGptConversation(): {
   title: string;
   url: string;
 } | null {
-  const sourceThreadId = parseChatGptConversationId(window.location.href);
+  const sourceThreadId = parseChatGptConversationId(window.location.href) ?? getTemporaryChatGptThreadId();
 
   if (!sourceThreadId) {
     return null;
@@ -35,6 +36,30 @@ export function getCurrentChatGptConversation(): {
     title: document.title.replace(/\s*-\s*ChatGPT\s*$/i, "").trim() || "ChatGPT conversation",
     url: window.location.href,
   };
+}
+
+function getTemporaryChatGptThreadId(): string | null {
+  if (!isChatGptUrl(window.location.href)) {
+    return null;
+  }
+
+  try {
+    const existing = window.sessionStorage.getItem(TEMPORARY_THREAD_STORAGE_KEY);
+
+    if (existing) {
+      return existing;
+    }
+
+    const next = `temporary:${globalThis.crypto?.randomUUID?.() ?? createTemporaryThreadSuffix()}`;
+    window.sessionStorage.setItem(TEMPORARY_THREAD_STORAGE_KEY, next);
+    return next;
+  } catch {
+    return `temporary:${createTemporaryThreadSuffix()}`;
+  }
+}
+
+function createTemporaryThreadSuffix(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 export function findConversationRoot(): HTMLElement {
