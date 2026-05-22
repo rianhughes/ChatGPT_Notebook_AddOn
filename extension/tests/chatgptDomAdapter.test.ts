@@ -56,6 +56,24 @@ describe("chatgptDomAdapter", () => {
     expect(extracted?.contentText).toContain("const answer = 42;");
   });
 
+  it("preserves anchors as Markdown links when extracting a full message", () => {
+    document.body.innerHTML = `
+      <main>
+        <div data-message-author-role="assistant" data-message-id="msg-link">
+          <div class="markdown">
+            <p>Read <a href="https://example.com/docs">the docs</a> first.</p>
+          </div>
+        </div>
+      </main>
+    `;
+
+    const [container] = findVisibleMessageContainers();
+    const extracted = extractMessageFromContainer(container);
+
+    expect(extracted?.contentMarkdown).toBe("Read [the docs](https://example.com/docs) first.");
+    expect(extracted?.contentText).toBe("Read the docs first.");
+  });
+
   it("extracts ChatGPT HTML tables as Markdown tables", () => {
     document.body.innerHTML = `
       <main>

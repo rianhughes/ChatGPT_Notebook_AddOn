@@ -173,7 +173,10 @@ export function MarkdownContent({
 
     const target = event?.target;
 
-    if (target instanceof Element && target.closest(".markdown-heading-action-button, .markdown-code-copy-button")) {
+    if (
+      target instanceof Element &&
+      target.closest(".markdown-heading-action-button, .markdown-code-copy-button, .markdown-link")
+    ) {
       return;
     }
 
@@ -1199,32 +1202,238 @@ function getSectionBoundaryLevel(line: string): number | null | undefined {
   return match[1] ? Number(match[1]) : null;
 }
 
-function renderInlineMarkdown(text: string) {
-  const segments = text.split(/(`[^`]+`)/g).filter(Boolean);
+function renderInlineMarkdown(text: string, keyPrefix = "inline"): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let index = 0;
+  let textBuffer = "";
 
-  return segments.map((segment, index) => {
-    if (segment.startsWith("`") && segment.endsWith("`")) {
-      return (
-        <code className="markdown-inline-code" key={index}>
-          {segment.slice(1, -1)}
-        </code>
-      );
+  function flushText() {
+    if (!textBuffer) {
+      return;
     }
 
-    return <span key={index}>{renderStrongText(segment, index)}</span>;
-  });
+    nodes.push(textBuffer);
+    textBuffer = "";
+  }
+
+  while (index < text.length) {
+    const code = readInlineCode(text, index);
+
+    if (code) {
+      flushText();
+      nodes.push(
+        <code className="markdown-inline-code" key={`${keyPrefix}-code-${nodes.length}`}>
+          {code.content}
+        </code>,
+      );
+      index = code.end;
+      continue;
+    }
+
+    const link = readMarkdownLink(text, index) ?? readAutolink(text, index) ?? readBareUrl(text, index);
+
+    if (link) {
+      flushText();
+
+      if (isSafeLinkHref(link.href)) {
+        nodes.push(
+          <a
+            className="markdown-link"
+            href={link.href}
+            key={`${keyPrefix}-link-${nodes.length}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {link.isMarkdownLink ? renderInlineMarkdown(link.label, `${keyPrefix}-link-${nodes.length}`) : link.label}
+          </a>,
+        );
+      } else {
+        textBuffer += link.label;
+      }
+
+      index = link.end;
+      continue;
+    }
+
+    const strong = readStrong(text, index);
+
+    if (strong) {
+      flushText();
+      nodes.push(
+        <strong key={`${keyPrefix}-strong-${nodes.length}`}>
+          {renderInlineMarkdown(strong.content, `${keyPrefix}-strong-${nodes.length}`)}
+        </strong>,
+      );
+      index = strong.end;
+      continue;
+    }
+
+    textBuffer += text[index];
+    index += 1;
+  }
+
+  flushText();
+  return nodes;
 }
 
-function renderStrongText(text: string, segmentIndex: number) {
-  const segments = text.split(/(\*\*[^*\n]+\*\*)/g).filter(Boolean);
+type InlineCodeMatch = {
+  content: string;
+  end: number;
+};
 
-  return segments.map((segment, index) => {
-    if (segment.startsWith("**") && segment.endsWith("**")) {
-      return <strong key={`${segmentIndex}-strong-${index}`}>{segment.slice(2, -2)}</strong>;
+type InlineLinkMatch = {
+  label: string;
+  href: string;
+  end: number;
+  isMarkdownLink: boolean;
+};
+
+type InlineStrongMatch = {
+  content: string;
+  end: number;
+};
+
+function readInlineCode(text: string, start: number): InlineCodeMatch | null {
+  if (text[start] !== "`") {
+    return null;
+  }
+
+  const end = text.indexOf("`", start + 1);
+
+  if (end <= start + 1 || text.slice(start + 1, end).includes("\n")) {
+    return null;
+  }
+
+  return {
+    content: text.slice(start + 1, end),
+    end: end + 1,
+  };
+}
+
+function readMarkdownLink(text: string, start: number): InlineLinkMatch | null {
+  if (text[start] !== "[") {
+    return null;
+  }
+
+  const labelEnd = findUnescapedCharacter(text, "]", start + 1);
+
+  if (labelEnd <= start + 1 || text[labelEnd + 1] !== "(") {
+    return null;
+  }
+
+  const hrefEnd = findUnescapedCharacter(text, ")", labelEnd + 2);
+
+  if (hrefEnd < 0) {
+    return null;
+  }
+
+  const label = text.slice(start + 1, labelEnd).trim();
+  const href = normalizeMarkdownLinkHref(text.slice(labelEnd + 2, hrefEnd));
+
+  if (!label || !href) {
+    return null;
+  }
+
+  return {
+    label,
+    href,
+    end: hrefEnd + 1,
+    isMarkdownLink: true,
+  };
+}
+
+function readAutolink(text: string, start: number): InlineLinkMatch | null {
+  const match = text.slice(start).match(/^<((?:https?:\/\/|mailto:)[^>\s]+)>/i);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    label: match[1],
+    href: match[1],
+    end: start + match[0].length,
+    isMarkdownLink: false,
+  };
+}
+
+function readBareUrl(text: string, start: number): InlineLinkMatch | null {
+  const previous = start > 0 ? text[start - 1] : "";
+
+  if (previous && !/\s|\(/.test(previous)) {
+    return null;
+  }
+
+  const match = text.slice(start).match(/^https?:\/\/[^\s<]+/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const href = trimTrailingUrlPunctuation(match[0]);
+
+  return {
+    label: href,
+    href,
+    end: start + href.length,
+    isMarkdownLink: false,
+  };
+}
+
+function readStrong(text: string, start: number): InlineStrongMatch | null {
+  if (!text.startsWith("**", start)) {
+    return null;
+  }
+
+  const end = text.indexOf("**", start + 2);
+
+  if (end <= start + 2 || text.slice(start + 2, end).includes("\n")) {
+    return null;
+  }
+
+  return {
+    content: text.slice(start + 2, end),
+    end: end + 2,
+  };
+}
+
+function findUnescapedCharacter(text: string, character: string, start: number): number {
+  for (let index = start; index < text.length; index += 1) {
+    if (text[index] !== character) {
+      continue;
     }
 
-    return <span key={`${segmentIndex}-text-${index}`}>{segment}</span>;
-  });
+    let backslashCount = 0;
+
+    for (let slashIndex = index - 1; slashIndex >= 0 && text[slashIndex] === "\\"; slashIndex -= 1) {
+      backslashCount += 1;
+    }
+
+    if (backslashCount % 2 === 0) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function normalizeMarkdownLinkHref(rawHref: string): string {
+  const trimmed = rawHref.trim();
+  const angleWrapped = trimmed.match(/^<([^>\s]+)>/);
+
+  if (angleWrapped) {
+    return angleWrapped[1];
+  }
+
+  return trimmed.split(/\s+/)[0] ?? "";
+}
+
+function trimTrailingUrlPunctuation(url: string): string {
+  return url.replace(/[),.;:!?]+$/, "");
+}
+
+function isSafeLinkHref(href: string): boolean {
+  return /^(https?:\/\/|mailto:)/i.test(href);
 }
 
 function normalizeLanguage(language: string | null, content: string): string {

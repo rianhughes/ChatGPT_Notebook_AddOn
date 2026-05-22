@@ -29,6 +29,33 @@ describe("MarkdownContent", () => {
     expect(html).toContain("<code class=\"markdown-inline-code\">**Stop generating**</code>");
   });
 
+  it("renders Markdown links as clickable anchors", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent markdown="Read [the docs](https://example.com/docs) before shipping." />,
+    );
+
+    expect(html).toContain(
+      '<a class="markdown-link" href="https://example.com/docs" target="_blank" rel="noreferrer">the docs</a>',
+    );
+  });
+
+  it("renders bare URLs and autolinks without touching inline code", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent markdown="Open https://example.com, <https://docs.example.com>, not `https://code.example.com`." />,
+    );
+
+    expect(html).toContain('<a class="markdown-link" href="https://example.com"');
+    expect(html).toContain('<a class="markdown-link" href="https://docs.example.com"');
+    expect(html).toContain('<code class="markdown-inline-code">https://code.example.com</code>');
+  });
+
+  it("does not render unsafe link protocols", () => {
+    const html = renderToStaticMarkup(<MarkdownContent markdown="[click me](javascript:alert(1))" />);
+
+    expect(html).not.toContain("<a ");
+    expect(html).toContain("click me");
+  });
+
   it("keeps heading levels available for styling", () => {
     const html = renderToStaticMarkup(<MarkdownContent markdown="## A larger notebook heading" />);
 
