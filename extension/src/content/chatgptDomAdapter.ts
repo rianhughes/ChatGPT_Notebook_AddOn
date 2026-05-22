@@ -181,8 +181,8 @@ function buildExtractedMessage(
 export const chatGptCaptureAdapter: MessageCaptureAdapter = {
   source: "chatgpt",
   labels: {
-    exportMessage: "Export to ChatGPT Note",
-    exportSelection: "Export selected text to ChatGPT Notes",
+    exportMessage: "Export to ChatGPT Notebook",
+    exportSelection: "Export selected text to ChatGPT Notebook",
   },
   supportsAiOperations: true,
   getCurrentContext: getCurrentChatGptConversation,

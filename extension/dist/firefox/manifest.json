@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "ChatGPT Notes Sidebar",
+  "name": "ChatGPT Notebook",
   "version": "0.1.0",
   "icons": {
     "16": "icon.png",
@@ -14,7 +14,7 @@
     "scripts": ["background.js"]
   },
   "sidebar_action": {
-    "default_title": "ChatGPT Notes",
+    "default_title": "ChatGPT Notebook",
     "default_panel": "sidebar.html",
     "default_icon": "icon.png"
   },
@@ -26,7 +26,7 @@
     }
   ],
   "action": {
-    "default_title": "Open ChatGPT Notes",
+    "default_title": "Open ChatGPT Notebook",
     "default_icon": "icon.png"
   },
   "web_accessible_resources": [

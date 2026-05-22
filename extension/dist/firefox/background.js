@@ -4755,7 +4755,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     return Number.isFinite(revision) ? revision : 0;
   }
   const AUTOSAVE_DELAY_MS = 1e4;
-  const BACKUP_DIR = "ChatGPT Notes Backups";
+  const BACKUP_DIR = "ChatGPT Notebook Backups";
   const BACKUP_RETENTION_DAYS = 7;
   let autosaveTimer = null;
   let writeInProgress = false;

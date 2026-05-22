@@ -1656,7 +1656,6 @@ function AutosaveStatusIndicator({
       className={`autosave-status is-${status.state}`}
       type="button"
       aria-label={actionLabel}
-      title="Back up now"
       onClick={onForceAutosave}
     >
       {getAutosaveIcon(status)}
@@ -1764,7 +1763,7 @@ function createEditableNotebookContext(
   };
 
   return [
-    "You may propose edits to this ChatGPT Notes notebook. Use the exact notebook, folder, and note IDs below.",
+    "You may propose edits to this ChatGPT Notebook. Use the exact notebook, folder, and note IDs below.",
     "When you want the extension to modify notes, return only a fenced JSON block using this format:",
     "",
     `\`\`\`${AI_OPERATIONS_BLOCK_LANGUAGE}`,

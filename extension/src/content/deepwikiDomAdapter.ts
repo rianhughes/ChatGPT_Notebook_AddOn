@@ -21,8 +21,8 @@ const SOURCE_REFERENCE_PATTERN = /^(?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+:\d+(?:-
 export const deepWikiCaptureAdapter: MessageCaptureAdapter = {
   source: "deepwiki",
   labels: {
-    exportMessage: "Export to ChatGPT Note",
-    exportSelection: "Export selected text to ChatGPT Notes",
+    exportMessage: "Export to ChatGPT Notebook",
+    exportSelection: "Export selected text to ChatGPT Notebook",
   },
   getCurrentContext: getCurrentDeepWikiContext,
   findConversationRoot,

@@ -132,14 +132,14 @@ export async function parseNotebookImportJson(json: string): Promise<RestoredNot
     return restoreNotebookExportData(parsed as NotebookExportData);
   }
 
-  throw new Error("Unsupported ChatGPT Notes import file.");
+  throw new Error("Unsupported ChatGPT Notebook import file.");
 }
 
 export async function parseNotebookBackupJson(json: string): Promise<RestoredNotebookBackupData> {
   const parsed = JSON.parse(json) as Partial<NotebookBackupData>;
 
   if (parsed.app !== BACKUP_APP_ID || parsed.backupVersion !== BACKUP_VERSION) {
-    throw new Error("Unsupported ChatGPT Notes backup file.");
+    throw new Error("Unsupported ChatGPT Notebook backup file.");
   }
 
   return restoreNotebookBackupData(parsed);

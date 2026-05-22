@@ -1634,8 +1634,8 @@ ${fence}`;
   const chatGptCaptureAdapter = {
     source: "chatgpt",
     labels: {
-      exportMessage: "Export to ChatGPT Note",
-      exportSelection: "Export selected text to ChatGPT Notes"
+      exportMessage: "Export to ChatGPT Notebook",
+      exportSelection: "Export selected text to ChatGPT Notebook"
     },
     supportsAiOperations: true,
     getCurrentContext: getCurrentChatGptConversation,
@@ -1697,8 +1697,8 @@ ${fence}`;
   const deepWikiCaptureAdapter = {
     source: "deepwiki",
     labels: {
-      exportMessage: "Export to ChatGPT Note",
-      exportSelection: "Export selected text to ChatGPT Notes"
+      exportMessage: "Export to ChatGPT Notebook",
+      exportSelection: "Export selected text to ChatGPT Notebook"
     },
     getCurrentContext: getCurrentDeepWikiContext,
     findConversationRoot,

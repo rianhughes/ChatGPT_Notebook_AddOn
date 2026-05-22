@@ -1,6 +1,6 @@
 # Firefox Implementation Plan
 
-This plan implements the ChatGPT Notes Sidebar extension for Firefox first, while keeping the core code portable enough to add Chrome support with a second manifest and sidebar adapter.
+This plan implements the ChatGPT Notebook extension for Firefox first, while keeping the core code portable enough to add Chrome support with a second manifest and sidebar adapter.
 
 ## Implementation Principles
 
@@ -128,7 +128,7 @@ Firefox manifest:
 ```json
 {
   "manifest_version": 3,
-  "name": "ChatGPT Notes Sidebar",
+  "name": "ChatGPT Notebook",
   "version": "0.1.0",
   "permissions": ["storage", "tabs", "clipboardWrite"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
@@ -136,7 +136,7 @@ Firefox manifest:
     "scripts": ["background.js"]
   },
   "sidebar_action": {
-    "default_title": "ChatGPT Notes",
+    "default_title": "ChatGPT Notebook",
     "default_panel": "sidebar.html"
   },
   "content_scripts": [
@@ -147,7 +147,7 @@ Firefox manifest:
     }
   ],
   "action": {
-    "default_title": "Open ChatGPT Notes"
+    "default_title": "Open ChatGPT Notebook"
   },
   "browser_specific_settings": {
     "gecko": {

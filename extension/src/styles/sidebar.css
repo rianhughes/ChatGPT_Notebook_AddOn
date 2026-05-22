@@ -814,6 +814,11 @@ button {
   left: auto;
 }
 
+.notebook-detail-actions .autosave-tooltip {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
 .notebook-tools-action-row .autosave-tooltip {
   top: calc(100% + 8px);
   bottom: auto;

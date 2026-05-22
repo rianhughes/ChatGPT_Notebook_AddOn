@@ -101,11 +101,19 @@ export function ThreadList({
     threadId: string;
     position: "before" | "after";
   } | null>(null);
+  const [pendingCreateFocus, setPendingCreateFocus] = useState<"notebook" | "folder" | null>(null);
+  const [focusedCreateInput, setFocusedCreateInput] = useState<"notebook" | "folder" | null>(null);
   const backupImportInputRef = useRef<HTMLInputElement | null>(null);
+  const notebookTitleInputRef = useRef<HTMLInputElement | null>(null);
+  const folderTitleInputRef = useRef<HTMLInputElement | null>(null);
   const canCollapse = !isFullPage;
   const panelCollapsed = canCollapse && collapsed;
   const backupToolsOpen = isFullPage && notebookBarExpanded;
   const toolsOpen = !panelCollapsed && (searchOpen || createOpen || folderCreateOpen || backupToolsOpen);
+  const notebookCreateExpanded = isFullPage ? notebookBarExpanded : createOpen;
+  const folderCreateExpanded = isFullPage ? notebookBarExpanded : folderCreateOpen;
+  const notebookCreateActive = focusedCreateInput === "notebook";
+  const folderCreateActive = focusedCreateInput === "folder";
 
   useEffect(() => {
     if (normalizedFilter) {
@@ -114,6 +122,47 @@ export function ThreadList({
       setFolderExpansionOverrides(new Map());
     }
   }, [normalizedFilter]);
+
+  useEffect(() => {
+    if (!pendingCreateFocus) {
+      return;
+    }
+
+    const input = pendingCreateFocus === "notebook" ? notebookTitleInputRef.current : folderTitleInputRef.current;
+
+    if (!input) {
+      return;
+    }
+
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    setPendingCreateFocus(null);
+  }, [createOpen, folderCreateOpen, notebookBarExpanded, pendingCreateFocus, toolsOpen]);
+
+  function openNotebookCreate() {
+    setCollapsed(false);
+    setNotebookBarExpanded(isFullPage);
+    setCreateOpen(!isFullPage);
+    setFolderCreateOpen(false);
+    setPendingCreateFocus("notebook");
+  }
+
+  function openFolderCreate() {
+    setCollapsed(false);
+    setNotebookBarExpanded(true);
+    setCreateOpen(false);
+    setFolderCreateOpen(false);
+    setPendingCreateFocus("folder");
+  }
+
+  function toggleNotebookBarExpanded() {
+    if (notebookBarExpanded) {
+      setFocusedCreateInput(null);
+      setPendingCreateFocus(null);
+    }
+
+    setNotebookBarExpanded((isExpanded) => !isExpanded);
+  }
 
   function getThreadFolderId(thread: ChatGptThread): string | null {
     return thread.folderId && folderIds.has(thread.folderId) ? thread.folderId : null;
@@ -641,7 +690,7 @@ export function ThreadList({
             aria-label={notebookBarExpanded ? "Hide notebook tools" : "Show notebook tools"}
             aria-expanded={notebookBarExpanded}
             aria-controls="notebook-list-tools"
-            onClick={() => setNotebookBarExpanded((isExpanded) => !isExpanded)}
+            onClick={toggleNotebookBarExpanded}
           >
             <span id="notebook-list-title" className="thread-panel-title">
               Notebooks
@@ -663,30 +712,24 @@ export function ThreadList({
             <Search size={16} aria-hidden="true" />
           </button>
           <button
-            className={`icon-button notebook-create-button${createOpen ? " is-active" : ""}`}
+            className={`icon-button notebook-create-button${notebookCreateActive ? " is-active" : ""}`}
             type="button"
             title="Create notebook"
             aria-label="Create notebook"
-            aria-expanded={createOpen}
-            onClick={() => {
-              setCollapsed(false);
-              setCreateOpen((isOpen) => !isOpen);
-            }}
+            aria-expanded={notebookCreateExpanded}
+            onClick={openNotebookCreate}
           >
             <Plus size={17} aria-hidden="true" />
           </button>
           {isFullPage ? (
             <>
               <button
-                className={`icon-button folder-create-button${folderCreateOpen ? " is-active" : ""}`}
+                className={`icon-button folder-create-button${folderCreateActive ? " is-active" : ""}`}
                 type="button"
                 title="Create folder"
                 aria-label="Create folder"
-                aria-expanded={folderCreateOpen}
-                onClick={() => {
-                  setCollapsed(false);
-                  setFolderCreateOpen((isOpen) => !isOpen);
-                }}
+                aria-expanded={folderCreateExpanded}
+                onClick={openFolderCreate}
               >
                 <FolderPlus size={17} aria-hidden="true" />
               </button>
@@ -712,11 +755,14 @@ export function ThreadList({
                   <label className="notebook-title-field">
                     <span className="sr-only">Notebook name</span>
                     <input
+                      ref={notebookTitleInputRef}
                       className="input"
                       type="text"
                       value={newNotebookTitle}
                       placeholder="New notebook"
                       onChange={(event) => onNewNotebookTitleChange(event.target.value)}
+                      onFocus={() => setFocusedCreateInput("notebook")}
+                      onBlur={() => setFocusedCreateInput(null)}
                     />
                   </label>
                   <button
@@ -735,11 +781,14 @@ export function ThreadList({
                   <label className="notebook-title-field">
                     <span className="sr-only">Folder name</span>
                     <input
+                      ref={folderTitleInputRef}
                       className="input"
                       type="text"
                       value={newFolderTitle}
                       placeholder="New folder"
                       onChange={(event) => onNewFolderTitleChange(event.target.value)}
+                      onFocus={() => setFocusedCreateInput("folder")}
+                      onBlur={() => setFocusedCreateInput(null)}
                     />
                   </label>
                   <button

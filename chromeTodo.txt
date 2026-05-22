@@ -1,6 +1,6 @@
 # Chrome Support Plan
 
-Goal: finish and verify Chrome support for the existing Firefox-first ChatGPT Notes Sidebar extension.
+Goal: finish and verify Chrome support for the existing Firefox-first ChatGPT Notebook extension.
 
 Verified current state:
 

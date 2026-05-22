@@ -10,7 +10,7 @@ import {
 } from "../core/repository";
 
 const AUTOSAVE_DELAY_MS = 10_000;
-const BACKUP_DIR = "ChatGPT Notes Backups";
+const BACKUP_DIR = "ChatGPT Notebook Backups";
 const BACKUP_RETENTION_DAYS = 7;
 
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;

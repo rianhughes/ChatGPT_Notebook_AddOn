@@ -1,4 +1,4 @@
-# ChatGPT Notes Sidebar Extension Architecture
+# ChatGPT Notebook Extension Architecture
 
 ## Goal
 
@@ -469,7 +469,7 @@ Firefox:
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
   "background": { "scripts": ["background.js"] },
   "sidebar_action": {
-    "default_title": "ChatGPT Notes",
+    "default_title": "ChatGPT Notebook",
     "default_panel": "sidebar.html"
   },
   "content_scripts": [
