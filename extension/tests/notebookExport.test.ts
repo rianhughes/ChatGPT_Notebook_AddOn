@@ -43,7 +43,7 @@ describe("notebook export", () => {
     expect(file.mimeType).toBe("application/json");
     expect(parsed).toMatchObject({
       app: "chatgpt-notes-sidebar",
-      exportVersion: 1,
+      exportVersion: 2,
       exportedAt: "2026-05-21T09:30:00.000Z",
       thread: {
         title: "Research Notes",
@@ -57,6 +57,7 @@ describe("notebook export", () => {
           contentText: "Fallback text",
         },
       ],
+      assets: [],
     });
     expect(parsed.messages[0]).not.toHaveProperty("prevId");
     expect(parsed.messages[0]).not.toHaveProperty("nextId");

@@ -1,4 +1,5 @@
 import { notesDb } from "../storage/db";
+import { getBlobContentHash, readImageDimensions, validateImageAsset } from "./assets";
 import { contentHashFromParts, createId } from "./hash";
 import { deleteExactTextFromMarkdown, markdownToPlainText } from "./markdown";
 import type {
@@ -7,6 +8,7 @@ import type {
   AppendMessageInput,
   ChatGptThread,
   ChatGptThreadInput,
+  NotebookAsset,
   NotebookFolder,
   NotebookFolderInput,
   NotebookInput,
@@ -25,6 +27,14 @@ import {
 export type NotebookSnapshot = {
   thread: ChatGptThread;
   messages: SavedMessage[];
+};
+
+export type CreateImageAssetInput = {
+  threadId: string;
+  messageId: string | null;
+  file: Blob;
+  filename?: string | null;
+  altText?: string | null;
 };
 
 export async function getAiOperationProposals(): Promise<AiOperationProposal[]> {
@@ -263,7 +273,7 @@ export async function reorderThread(
 }
 
 export async function deleteThread(threadId: string): Promise<void> {
-  await notesDb.transaction("rw", notesDb.threads, notesDb.messages, notesDb.settings, async () => {
+  await notesDb.transaction("rw", notesDb.threads, notesDb.messages, notesDb.settings, notesDb.assets, async () => {
     const thread = await notesDb.threads.get(threadId);
 
     if (!thread) {
@@ -271,6 +281,7 @@ export async function deleteThread(threadId: string): Promise<void> {
     }
 
     await notesDb.messages.where("threadId").equals(threadId).delete();
+    await notesDb.assets.where("threadId").equals(threadId).delete();
     await notesDb.threads.delete(threadId);
 
     const activeSaveTarget = await notesDb.settings.get("activeSaveTargetThreadId");
@@ -385,6 +396,75 @@ export async function getMessagesInOrder(threadId: string): Promise<SavedMessage
 
   const messages = await notesDb.messages.where("threadId").equals(threadId).toArray();
   return orderMessages(thread, messages);
+}
+
+export async function createImageAsset(input: CreateImageAssetInput): Promise<NotebookAsset> {
+  const validation = validateImageAsset(input.file);
+
+  if (!validation.ok) {
+    throw new Error(validation.error);
+  }
+
+  const [contentHash, dimensions] = await Promise.all([
+    getBlobContentHash(input.file),
+    readImageDimensions(input.file),
+  ]);
+  const timestamp = Date.now();
+
+  return notesDb.transaction("rw", notesDb.threads, notesDb.messages, notesDb.assets, async () => {
+    const thread = await requireThread(input.threadId);
+
+    if (input.messageId) {
+      const message = await notesDb.messages.get(input.messageId);
+
+      if (!message || message.threadId !== thread.id) {
+        throw new Error(`Missing message ${input.messageId}`);
+      }
+    }
+
+    const existing = await notesDb.assets
+      .where("contentHash")
+      .equals(contentHash)
+      .and(
+        (asset) =>
+          asset.threadId === thread.id &&
+          asset.messageId === input.messageId &&
+          asset.mimeType === validation.mimeType,
+      )
+      .first();
+
+    if (existing) {
+      return existing;
+    }
+
+    const asset: NotebookAsset = {
+      id: createId("asset"),
+      threadId: thread.id,
+      messageId: input.messageId,
+      kind: "image",
+      mimeType: validation.mimeType,
+      filename: normalizeAssetFilename(input.filename),
+      altText: normalizeAssetAltText(input.altText, input.filename),
+      byteSize: input.file.size,
+      width: dimensions?.width ?? null,
+      height: dimensions?.height ?? null,
+      contentHash,
+      blob: input.file,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    await notesDb.assets.add(asset);
+    return asset;
+  });
+}
+
+export async function getNotebookAsset(assetId: string): Promise<NotebookAsset | null> {
+  return (await notesDb.assets.get(assetId)) ?? null;
+}
+
+export async function getAssetsForThread(threadId: string): Promise<NotebookAsset[]> {
+  return notesDb.assets.where("threadId").equals(threadId).toArray();
 }
 
 export async function restoreNotebookSnapshot(snapshot: NotebookSnapshot): Promise<SavedMessage[]> {
@@ -1063,4 +1143,20 @@ function getDefaultMessageTitle(markdown: string): string {
   }
 
   return markdownToPlainText(firstLine) || firstLine || "Empty note";
+}
+
+function normalizeAssetFilename(filename: string | null | undefined): string | null {
+  const normalized = filename?.trim().replace(/[\\/:*?"<>|]+/g, "-").slice(0, 180) ?? "";
+  return normalized || null;
+}
+
+function normalizeAssetAltText(altText: string | null | undefined, filename: string | null | undefined): string {
+  const normalized = altText?.replace(/\s+/g, " ").trim();
+
+  if (normalized) {
+    return normalized.slice(0, 180);
+  }
+
+  const filenameLabel = filename?.trim().replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " ");
+  return filenameLabel ? filenameLabel.slice(0, 180) : "Inserted image";
 }

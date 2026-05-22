@@ -1,4 +1,5 @@
-import type { NotebookExportData, NotebookExportMessage } from "./notebookExport";
+import { NOTEBOOK_ASSET_URL_PREFIX } from "./assets";
+import type { NotebookExportAsset, NotebookExportData, NotebookExportMessage } from "./notebookExport";
 
 export function createNotebookPrintHtml(data: NotebookExportData): string {
   const title = escapeHtml(data.thread.title);
@@ -22,7 +23,7 @@ export function createNotebookPrintHtml(data: NotebookExportData): string {
     `<h1>${title}</h1>`,
     "</header>",
     data.messages.length > 0
-      ? `<section class="notebook-print-messages">${data.messages.map(formatPrintableMessage).join("\n")}</section>`
+      ? `<section class="notebook-print-messages">${data.messages.map((message) => formatPrintableMessage(message, data.assets)).join("\n")}</section>`
       : '<p class="notebook-print-empty">No saved notes.</p>',
     "</main>",
     "</body>",
@@ -30,7 +31,7 @@ export function createNotebookPrintHtml(data: NotebookExportData): string {
   ].join("\n");
 }
 
-function formatPrintableMessage(message: NotebookExportMessage): string {
+function formatPrintableMessage(message: NotebookExportMessage, assets: NotebookExportAsset[]): string {
   const role = escapeHtml(formatRole(message.role));
   const timestamp = toIsoString(message.createdAt);
   const markdown = message.contentMarkdown.trim() || message.contentText.trim();
@@ -41,12 +42,12 @@ function formatPrintableMessage(message: NotebookExportMessage): string {
     `<h2>${role}</h2>`,
     `<time datetime="${escapeHtml(timestamp)}">${escapeHtml(timestamp)}</time>`,
     "</header>",
-    `<div class="notebook-print-content">${formatPrintableMarkdown(markdown)}</div>`,
+    `<div class="notebook-print-content">${formatPrintableMarkdown(markdown, assets)}</div>`,
     "</article>",
   ].join("\n");
 }
 
-function formatPrintableMarkdown(markdown: string): string {
+function formatPrintableMarkdown(markdown: string, assets: NotebookExportAsset[]): string {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const html: string[] = [];
   let paragraphLines: string[] = [];
@@ -61,7 +62,7 @@ function formatPrintableMarkdown(markdown: string): string {
       return;
     }
 
-    html.push(`<p>${renderInlineMarkdown(paragraphLines.join(" "))}</p>`);
+    html.push(`<p>${renderInlineMarkdown(paragraphLines.join(" "), assets)}</p>`);
     paragraphLines = [];
   };
 
@@ -70,7 +71,7 @@ function formatPrintableMarkdown(markdown: string): string {
       return;
     }
 
-    const items = list.items.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("");
+    const items = list.items.map((item) => `<li>${renderInlineMarkdown(item, assets)}</li>`).join("");
     html.push(`<${list.type}>${items}</${list.type}>`);
     list = null;
   };
@@ -80,7 +81,7 @@ function formatPrintableMarkdown(markdown: string): string {
       return;
     }
 
-    html.push(`<blockquote>${quoteLines.map((line) => `<p>${renderInlineMarkdown(line)}</p>`).join("")}</blockquote>`);
+    html.push(`<blockquote>${quoteLines.map((line) => `<p>${renderInlineMarkdown(line, assets)}</p>`).join("")}</blockquote>`);
     quoteLines = [];
   };
 
@@ -127,7 +128,7 @@ function formatPrintableMarkdown(markdown: string): string {
     if (heading) {
       flushFlow();
       const level = Math.min(heading[1].length + 1, 6);
-      html.push(`<h${level}>${renderInlineMarkdown(heading[2].trim())}</h${level}>`);
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2].trim(), assets)}</h${level}>`);
       continue;
     }
 
@@ -170,20 +171,46 @@ function formatPrintableMarkdown(markdown: string): string {
   return html.join("\n") || '<p class="notebook-print-empty">Empty note.</p>';
 }
 
-function renderInlineMarkdown(value: string): string {
+function renderInlineMarkdown(value: string, assets: NotebookExportAsset[]): string {
+  const assetUrls = new Map(
+    assets.map((asset) => [
+      `${NOTEBOOK_ASSET_URL_PREFIX}${asset.id}`,
+      `data:${asset.mimeType};base64,${asset.contentBase64}`,
+    ]),
+  );
+  const imageSegments: string[] = [];
+  const withImageTokens = value.replace(
+    /!\[([^\]\n]*)\]\((cgpt-asset:[^)]+)\)/g,
+    (_match, altText: string, href: string) => {
+      const url = assetUrls.get(href);
+
+      if (!url) {
+        return altText;
+      }
+
+      const token = `@@NOTEPRINTIMAGE${imageSegments.length}@@`;
+      imageSegments.push(`<img src="${escapeHtml(url)}" alt="${escapeHtml(altText)}">`);
+      return token;
+    },
+  );
   const codeSegments: string[] = [];
-  const html = escapeHtml(value).replace(/`([^`]+)`/g, (_match, code: string) => {
+  const html = escapeHtml(withImageTokens).replace(/`([^`]+)`/g, (_match, code: string) => {
     const token = `@@NOTEPRINTCODE${codeSegments.length}@@`;
     codeSegments.push(`<code>${code}</code>`);
     return token;
   });
 
-  return codeSegments.reduce(
+  const withCode = codeSegments.reduce(
     (rendered, code, index) => rendered.replaceAll(`@@NOTEPRINTCODE${index}@@`, code),
     html
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/_([^_\n]+)_/g, "<em>$1</em>")
       .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>'),
+  );
+
+  return imageSegments.reduce(
+    (rendered, image, index) => rendered.replaceAll(`@@NOTEPRINTIMAGE${index}@@`, image),
+    withCode,
   );
 }
 
@@ -344,6 +371,14 @@ h1 {
   display: block;
   background: transparent;
   padding: 0;
+}
+
+.notebook-print-content img {
+  display: block;
+  max-width: 100%;
+  max-height: 620px;
+  margin: 12px 0;
+  object-fit: contain;
 }
 
 .notebook-print-content a {

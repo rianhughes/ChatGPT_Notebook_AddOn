@@ -56,6 +56,30 @@ describe("MarkdownContent", () => {
     expect(html).toContain("click me");
   });
 
+  it("renders internal image assets through the supplied resolver", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(
+        <MarkdownContent
+          markdown="See ![diagram](cgpt-asset:asset-1)"
+          loadImageAssetUrl={async (assetId) => (assetId === "asset-1" ? "blob:test-image" : null)}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const image = host.querySelector<HTMLImageElement>(".markdown-image");
+
+    expect(image?.getAttribute("src")).toBe("blob:test-image");
+    expect(image?.getAttribute("alt")).toBe("diagram");
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
   it("keeps heading levels available for styling", () => {
     const html = renderToStaticMarkup(<MarkdownContent markdown="## A larger notebook heading" />);
 

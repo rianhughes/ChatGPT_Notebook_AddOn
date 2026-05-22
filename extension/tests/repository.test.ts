@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { contentHashFromParts, createId } from "../src/core/hash";
+import { markdownToPlainText } from "../src/core/markdown";
 import {
   appendMessage,
   appendSavedMessageFromChatGpt,
+  createImageAsset,
   createFolder,
   createNotebook,
   deleteFolder,
@@ -10,7 +13,9 @@ import {
   deleteSelectedTextFromMessage,
   deleteThread,
   getActiveSaveTargetThread,
+  getAssetsForThread,
   getFolders,
+  getNotebookAsset,
   getMessagesInOrder,
   getSavedStateForVisibleMessages,
   getThread,
@@ -56,6 +61,23 @@ describe("repository", () => {
 
     expect(messages).toHaveLength(2);
     expect(messages.map((message) => message.contentText)).toEqual(["hello", "hello"]);
+  });
+
+  it("stores image assets separately from note markdown", async () => {
+    const notebook = await createNotebook({ title: "Images" });
+    const note = await appendMessage(notebook.id, messageInput("Draft note"));
+    const file = new File([new Uint8Array([1, 2, 3])], "diagram.png", { type: "image/png" });
+    const asset = await createImageAsset({ threadId: notebook.id, messageId: note.id, file, filename: "diagram.png" });
+
+    expect(asset.threadId).toBe(notebook.id);
+    expect(asset.messageId).toBe(note.id);
+    expect(asset.mimeType).toBe("image/png");
+    expect(asset.altText).toBe("diagram");
+
+    await updateMessageContent(notebook.id, note.id, `Look here:\n\n![diagram](cgpt-asset:${asset.id})`);
+
+    expect(await getNotebookAsset(asset.id)).toMatchObject({ id: asset.id, byteSize: 3 });
+    expect(await getAssetsForThread(notebook.id)).toHaveLength(1);
   });
 
   it("deletes head, middle, and tail without corrupting order", async () => {
@@ -368,6 +390,19 @@ function saveInput(
     sourceMessageKey: key.startsWith("export:") ? key : `source:${key}`,
     contentHash: hash,
     role: "assistant" as const,
+    contentMarkdown,
+    contentText,
+  };
+}
+
+function messageInput(contentMarkdown: string) {
+  const contentText = markdownToPlainText(contentMarkdown);
+
+  return {
+    sourceMessageId: null,
+    sourceMessageKey: createId("test-note"),
+    contentHash: contentHashFromParts({ contentMarkdown, contentText }),
+    role: "note" as const,
     contentMarkdown,
     contentText,
   };

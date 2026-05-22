@@ -1,7 +1,8 @@
-import type { ChatGptThread, MessageRole, SavedMessage } from "./models";
+import { NOTEBOOK_ASSET_URL_PREFIX } from "./assets";
+import type { ChatGptThread, MessageRole, NotebookAsset, SavedMessage } from "./models";
 
 const EXPORT_APP_ID = "chatgpt-notes-sidebar";
-const EXPORT_VERSION = 1;
+const EXPORT_VERSION = 2;
 
 export type NotebookExportFormatId = "markdown" | "json";
 
@@ -32,6 +33,24 @@ export type NotebookExportData = {
     updatedAt: number;
   };
   messages: NotebookExportMessage[];
+  assets: NotebookExportAsset[];
+};
+
+export type NotebookExportAsset = {
+  id: string;
+  threadId: string;
+  messageId: string | null;
+  kind: NotebookAsset["kind"];
+  mimeType: string;
+  filename: string | null;
+  altText: string;
+  byteSize: number;
+  width: number | null;
+  height: number | null;
+  contentHash: string;
+  contentBase64: string;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type NotebookExportFormatter = {
@@ -98,6 +117,38 @@ export function createNotebookExportData(
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
     })),
+    assets: [],
+  };
+}
+
+export async function createNotebookExportDataWithAssets(
+  thread: ChatGptThread,
+  messages: SavedMessage[],
+  assets: NotebookAsset[],
+  options: { now?: number | Date } = {},
+): Promise<NotebookExportData> {
+  const data = createNotebookExportData(thread, messages, options);
+
+  return {
+    ...data,
+    assets: await Promise.all(
+      assets.map(async (asset) => ({
+        id: asset.id,
+        threadId: asset.threadId,
+        messageId: asset.messageId,
+        kind: asset.kind,
+        mimeType: asset.mimeType,
+        filename: asset.filename,
+        altText: asset.altText,
+        byteSize: asset.byteSize,
+        width: asset.width,
+        height: asset.height,
+        contentHash: asset.contentHash,
+        contentBase64: await blobToBase64(asset.blob),
+        createdAt: asset.createdAt,
+        updatedAt: asset.updatedAt,
+      })),
+    ),
   };
 }
 
@@ -145,11 +196,11 @@ function formatMarkdownExport(data: NotebookExportData): string {
     return `${header}\n`;
   }
 
-  return `${header}\n\n${data.messages.map(formatMarkdownMessage).join("\n\n")}\n`;
+  return `${header}\n\n${data.messages.map((message) => formatMarkdownMessage(message, data.assets)).join("\n\n")}\n`;
 }
 
-function formatMarkdownMessage(message: NotebookExportMessage): string {
-  const markdown = message.contentMarkdown.trim() || message.contentText.trim();
+function formatMarkdownMessage(message: NotebookExportMessage, assets: NotebookExportAsset[]): string {
+  const markdown = replaceAssetLinksWithDataUrls(message.contentMarkdown.trim() || message.contentText.trim(), assets);
   const timestamp = toIsoString(message.createdAt);
 
   return [`## ${formatRole(message.role)} - ${timestamp}`, "", markdown].join("\n").trimEnd();
@@ -184,4 +235,29 @@ function formatRole(role: MessageRole): string {
 
 function toIsoString(value: number | Date): string {
   return new Date(value).toISOString();
+}
+
+function replaceAssetLinksWithDataUrls(markdown: string, assets: NotebookExportAsset[]): string {
+  const assetsByHref = new Map(
+    assets.map((asset) => [
+      `${NOTEBOOK_ASSET_URL_PREFIX}${asset.id}`,
+      `data:${asset.mimeType};base64,${asset.contentBase64}`,
+    ]),
+  );
+
+  return markdown.replace(
+    /!\[([^\]\n]*)\]\((cgpt-asset:[^)]+)\)/g,
+    (_match, altText: string, href: string) => `![${altText}](${assetsByHref.get(href) ?? href})`,
+  );
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.slice(index, index + 0x8000));
+  }
+
+  return btoa(binary);
 }

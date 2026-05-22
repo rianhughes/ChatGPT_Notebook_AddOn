@@ -13,6 +13,7 @@ import {
 import "../styles/sidebar.css";
 import { applyAiOperationPackage } from "../core/aiOperations";
 import { AI_OPERATIONS_BLOCK_LANGUAGE, summarizeAiOperation } from "../core/aiOperationProtocol";
+import { createAssetMarkdown } from "../core/assets";
 import type {
   ActiveChatGptContextResponse,
   ActiveSaveTargetResponse,
@@ -31,7 +32,7 @@ import {
   unmakeHeadingSectionInMarkdown,
 } from "../core/markdown";
 import {
-  createNotebookExportData,
+  createNotebookExportDataWithAssets,
   createNotebookExportFile,
   NOTEBOOK_EXPORT_FORMATTERS,
   type NotebookExportFormatId,
@@ -39,6 +40,7 @@ import {
 import { createNotebookPrintHtml } from "../core/notebookPrint";
 import {
   appendMessage,
+  createImageAsset,
   createNotebook,
   createFolder,
   deleteAiOperationProposal,
@@ -48,7 +50,9 @@ import {
   deleteThread,
   getFolders,
   getAiOperationProposals,
+  getAssetsForThread,
   getMessagesInOrder,
+  getNotebookAsset,
   getThreadBySource,
   getThreads,
   mergeMessages,
@@ -171,6 +175,16 @@ function App() {
     }
 
     setMessages(await getMessagesInOrder(threadId));
+  }, []);
+
+  const loadImageAssetUrl = useCallback(async (assetId: string) => {
+    const asset = await getNotebookAsset(assetId);
+
+    if (!asset || asset.kind !== "image") {
+      return null;
+    }
+
+    return URL.createObjectURL(asset.blob);
   }, []);
 
   useEffect(() => {
@@ -445,8 +459,11 @@ function App() {
     }
 
     try {
-      const orderedMessages = await getMessagesInOrder(selectedThread.id);
-      const exportData = createNotebookExportData(selectedThread, orderedMessages);
+      const [orderedMessages, assets] = await Promise.all([
+        getMessagesInOrder(selectedThread.id),
+        getAssetsForThread(selectedThread.id),
+      ]);
+      const exportData = await createNotebookExportDataWithAssets(selectedThread, orderedMessages, assets);
       const file = createNotebookExportFile(exportData, formatId);
 
       downloadNotebookExport(file);
@@ -473,8 +490,11 @@ function App() {
     }
 
     try {
-      const orderedMessages = await getMessagesInOrder(selectedThread.id);
-      const exportData = createNotebookExportData(selectedThread, orderedMessages);
+      const [orderedMessages, assets] = await Promise.all([
+        getMessagesInOrder(selectedThread.id),
+        getAssetsForThread(selectedThread.id),
+      ]);
+      const exportData = await createNotebookExportDataWithAssets(selectedThread, orderedMessages, assets);
 
       printWindow.print(createNotebookPrintHtml(exportData));
       setStatus(`Opened PDF export for ${selectedThread.title}`);
@@ -948,6 +968,26 @@ function App() {
     }
   }
 
+  async function insertImageIntoMessageDraft(message: SavedMessage, file: File): Promise<string | null> {
+    setError("");
+    setStatus("");
+
+    try {
+      const asset = await createImageAsset({
+        threadId: message.threadId,
+        messageId: message.id,
+        file,
+        filename: file.name,
+      });
+
+      setStatus("Image added to note draft");
+      return createAssetMarkdown(asset.id, asset.altText);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not add image.");
+      return null;
+    }
+  }
+
   async function removeSelectedText(message: SavedMessage) {
     setError("");
     setStatus("");
@@ -1305,6 +1345,8 @@ function App() {
                 saveSelectedTextEdit(message, selectedText, replacementText)
               }
               onSaveMessageEdit={saveMessageEdit}
+              onInsertImage={insertImageIntoMessageDraft}
+              loadImageAssetUrl={loadImageAssetUrl}
               onDeleteMessage={(message) => void deleteSingleMessage(message)}
               onDeleteMessageSection={(message, headingIndex) => void deleteMessageSection(message, headingIndex)}
               onDeleteSelectedText={removeSelectedText}

@@ -4173,6 +4173,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       __publicField(this, "settings");
       __publicField(this, "folders");
       __publicField(this, "aiOperationProposals");
+      __publicField(this, "assets");
       this.version(1).stores({
         threads: "&id, &[source+sourceThreadId], updatedAt",
         messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt"
@@ -4195,6 +4196,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         folders: "&id, sortOrder, updatedAt",
         aiOperationProposals: "&id, sourceThreadId, createdAt, updatedAt"
       });
+      this.version(5).stores({
+        threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
+        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
+        settings: "&key, updatedAt",
+        folders: "&id, sortOrder, updatedAt",
+        aiOperationProposals: "&id, sourceThreadId, createdAt, updatedAt",
+        assets: "&id, threadId, messageId, contentHash, updatedAt"
+      });
     }
   }
   const notesDb = new NotesDatabase();
@@ -4211,7 +4220,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     return markdown.replace(getSectionBoundaryLinePattern("gm"), "").replace(
       /```[\s\S]*?```/g,
       (block) => block.replace(/^```[^\n]*\n?/, "").replace(/\n?```$/, "").trim()
-    ).replace(/`([^`]+)`/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/^\s{0,3}#{1,6}\s+/gm, "").replace(/^\s*[-*]\s+/gm, "").replace(/\s+/g, " ").trim();
+    ).replace(/`([^`]+)`/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/^\s{0,3}#{1,6}\s+/gm, "").replace(/^\s*[-*]\s+/gm, "").replace(/\s+/g, " ").trim();
   }
   function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

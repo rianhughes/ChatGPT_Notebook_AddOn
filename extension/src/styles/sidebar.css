@@ -1531,6 +1531,30 @@ button {
   box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
+.markdown-image {
+  display: block;
+  max-width: min(100%, 720px);
+  max-height: 520px;
+  margin: 10px 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.markdown-image-fallback {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  padding: 2px 7px;
+  color: var(--color-muted);
+  font-size: 0.9em;
+}
+
+.message-image-upload-button {
+  cursor: pointer;
+}
+
 .message-actions {
   position: sticky;
   top: 7px;

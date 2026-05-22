@@ -24,6 +24,25 @@ export type NotebookFolder = {
   updatedAt: number;
 };
 
+export type NotebookAssetKind = "image";
+
+export type NotebookAsset = {
+  id: string;
+  threadId: string;
+  messageId: string | null;
+  kind: NotebookAssetKind;
+  mimeType: string;
+  filename: string | null;
+  altText: string;
+  byteSize: number;
+  width: number | null;
+  height: number | null;
+  contentHash: string;
+  blob: Blob;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type AppSettingKey = "activeSaveTargetThreadId";
 
 export type AppSetting = {

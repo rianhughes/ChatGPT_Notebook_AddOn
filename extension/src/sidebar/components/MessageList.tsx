@@ -1,5 +1,5 @@
-import { GripVertical, Sparkles, Undo2 } from "lucide-react";
-import type { DragEvent } from "react";
+import { GripVertical, ImagePlus, Sparkles, Undo2 } from "lucide-react";
+import type { ClipboardEvent, DragEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { formatPastedNoteMarkdown, markdownToPlainText } from "../../core/markdown";
@@ -35,6 +35,8 @@ type MessageListProps = {
   ): void;
   onSaveSelectedTextEdit(message: SavedMessage, selectedText: string, replacementText: string): Promise<void>;
   onSaveMessageEdit(message: SavedMessage, title: string, contentMarkdown: string): Promise<void>;
+  onInsertImage?(message: SavedMessage, file: File): Promise<string | null>;
+  loadImageAssetUrl?(assetId: string): Promise<string | null>;
   onDeleteMessage(message: SavedMessage): void;
   onDeleteMessageSection(message: SavedMessage, headingIndex: number): void;
   onDeleteSelectedText(message: SavedMessage): void | Promise<void>;
@@ -60,6 +62,8 @@ export function MessageList({
   onMoveSelectedTextToSection,
   onSaveSelectedTextEdit,
   onSaveMessageEdit,
+  onInsertImage = async () => null,
+  loadImageAssetUrl,
   onDeleteMessage,
   onDeleteMessageSection,
   onDeleteSelectedText,
@@ -243,6 +247,54 @@ export function MessageList({
       !currentTitle || currentTitle === currentDefaultHeader ? getDefaultNoteHeader(contentMarkdown) : currentTitle;
 
     await onSaveMessageEdit(message, nextTitle, contentMarkdown);
+  }
+
+  async function insertImageIntoDraft(message: SavedMessage, file: File, textarea?: HTMLTextAreaElement | null) {
+    const imageMarkdown = await onInsertImage(message, file);
+
+    if (!imageMarkdown) {
+      return;
+    }
+
+    setDraftMarkdown((currentMarkdown) => {
+      if (!textarea) {
+        return appendImageMarkdown(currentMarkdown, imageMarkdown);
+      }
+
+      const selectionStart = textarea.selectionStart;
+      const selectionEnd = textarea.selectionEnd;
+      const nextMarkdown = insertMarkdownAtRange(currentMarkdown, imageMarkdown, selectionStart, selectionEnd);
+      const nextCursor = selectionStart + imageMarkdown.length + 2;
+
+      window.setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(nextCursor, nextCursor);
+      }, 0);
+
+      return nextMarkdown;
+    });
+  }
+
+  function handleEditorPaste(message: SavedMessage, event: ClipboardEvent<HTMLTextAreaElement>) {
+    const file = getFirstImageFile(event.clipboardData?.files);
+
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
+    void insertImageIntoDraft(message, file, event.currentTarget);
+  }
+
+  function handleEditorDrop(message: SavedMessage, event: DragEvent<HTMLTextAreaElement>) {
+    const file = getFirstImageFile(event.dataTransfer.files);
+
+    if (!file) {
+      return;
+    }
+
+    event.preventDefault();
+    void insertImageIntoDraft(message, file, event.currentTarget);
   }
 
   function cancelEdit() {
@@ -493,8 +545,27 @@ export function MessageList({
                       value={draftMarkdown}
                       rows={Math.max(8, Math.min(24, draftMarkdown.split("\n").length + 2))}
                       onChange={(event) => setDraftMarkdown(event.target.value)}
+                      onDrop={(event) => handleEditorDrop(message, event)}
+                      onPaste={(event) => handleEditorPaste(message, event)}
                     />
                     <div className="message-editor-actions">
+                      <label className="tool-button secondary message-image-upload-button">
+                        <ImagePlus size={16} aria-hidden="true" />
+                        Image
+                        <input
+                          className="sr-only"
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          onChange={(event) => {
+                            const file = event.currentTarget.files?.[0] ?? null;
+                            event.currentTarget.value = "";
+
+                            if (file) {
+                              void insertImageIntoDraft(message, file);
+                            }
+                          }}
+                        />
+                      </label>
                       <button
                         className="tool-button secondary"
                         type="button"
@@ -532,6 +603,7 @@ export function MessageList({
                       markdown={noteHeader.bodyMarkdown}
                       collapseAllHeadings={areHeadingsCollapsed}
                       selectedHeadingIndex={activeHeadingIndex}
+                      loadImageAssetUrl={loadImageAssetUrl}
                       onInsertSection={(headingIndex) => onInsertMessageSection(message, headingIndex)}
                       onDeleteSection={(headingIndex) => onDeleteMessageSection(message, headingIndex)}
                       onSelectHeadingSection={(headingIndex) => selectHeadingSection(message, headingIndex)}
@@ -751,4 +823,26 @@ export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   }
 
   return Boolean(target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only']"));
+}
+
+function getFirstImageFile(files: FileList | null | undefined): File | null {
+  if (!files) {
+    return null;
+  }
+
+  return Array.from(files).find((file) => file.type.startsWith("image/")) ?? null;
+}
+
+function appendImageMarkdown(markdown: string, imageMarkdown: string): string {
+  const trimmed = markdown.trimEnd();
+  return trimmed ? `${trimmed}\n\n${imageMarkdown}\n` : `${imageMarkdown}\n`;
+}
+
+function insertMarkdownAtRange(markdown: string, insertion: string, start: number, end: number): string {
+  const prefix = markdown.slice(0, start).replace(/[ \t]*$/, "");
+  const suffix = markdown.slice(end).replace(/^[ \t]*/, "");
+  const leadingBreak = prefix && !prefix.endsWith("\n\n") ? (prefix.endsWith("\n") ? "\n" : "\n\n") : "";
+  const trailingBreak = suffix && !suffix.startsWith("\n\n") ? (suffix.startsWith("\n") ? "\n" : "\n\n") : "\n";
+
+  return `${prefix}${leadingBreak}${insertion}${trailingBreak}${suffix}`;
 }

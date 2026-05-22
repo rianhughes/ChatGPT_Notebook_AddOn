@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { copyText } from "../../core/clipboard";
+import { getAssetIdFromHref } from "../../core/assets";
 import { SECTION_BOUNDARY_MARKER } from "../../core/markdown";
 import {
   hasNoteSelectionDragData,
@@ -49,6 +50,7 @@ type MarkdownContentProps = {
   markdown: string;
   collapseAllHeadings?: boolean;
   selectedHeadingIndex?: number | null;
+  loadImageAssetUrl?(assetId: string): Promise<string | null>;
   onInsertSection?(headingIndex: number): void;
   onDeleteSection?(headingIndex: number): void;
   onSelectHeadingSection?(headingIndex: number): void;
@@ -60,6 +62,7 @@ export function MarkdownContent({
   markdown,
   collapseAllHeadings = false,
   selectedHeadingIndex = null,
+  loadImageAssetUrl,
   onInsertSection,
   onDeleteSection,
   onSelectHeadingSection,
@@ -226,6 +229,7 @@ export function MarkdownContent({
   return (
     <div className="rendered-message">
       {renderMarkdownBlocks(blocks, {
+        loadImageAssetUrl,
         collapsedHeadingKeys,
         onToggleHeading: toggleHeading,
         selectedHeadingIndex,
@@ -281,6 +285,7 @@ type RenderMarkdownOptions = {
   onSelectHeadingSection?: (headingIndex: number) => void;
   dragDrop: HeadingDragDropOptions | null;
   inlineEdit: InlineEditOptions | null;
+  loadImageAssetUrl?: (assetId: string) => Promise<string | null>;
 };
 
 type HeadingDragDropOptions = {
@@ -325,6 +330,7 @@ function renderMarkdownBlocks(blocks: MarkdownBlock[], options: RenderMarkdownOp
           dragDrop: options.dragDrop,
           isDropTarget: options.dragDrop?.dropTargetHeadingKey === block.key,
           inlineEdit: options.inlineEdit,
+          loadImageAssetUrl: options.loadImageAssetUrl,
         }),
       );
 
@@ -336,7 +342,12 @@ function renderMarkdownBlocks(blocks: MarkdownBlock[], options: RenderMarkdownOp
     }
 
     if (collapsedSectionLevels.length === 0) {
-      renderedBlocks.push(renderMarkdownBlock(block, { inlineEdit: options.inlineEdit }));
+      renderedBlocks.push(
+        renderMarkdownBlock(block, {
+          inlineEdit: options.inlineEdit,
+          loadImageAssetUrl: options.loadImageAssetUrl,
+        }),
+      );
     }
   });
 
@@ -356,6 +367,7 @@ function renderMarkdownBlock(
     dragDrop?: HeadingDragDropOptions | null;
     isDropTarget?: boolean;
     inlineEdit?: InlineEditOptions | null;
+    loadImageAssetUrl?: (assetId: string) => Promise<string | null>;
   },
 ) {
   const inlineEdit = headingOptions?.inlineEdit ?? null;
@@ -404,7 +416,7 @@ function renderMarkdownBlock(
             onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
           >
             <span className="markdown-heading-row">
-              <span className="markdown-heading-text">{renderInlineMarkdown(block.content)}</span>
+              <span className="markdown-heading-text">{renderInlineMarkdown(block.content, "inline", headingOptions?.loadImageAssetUrl)}</span>
               {headingOptions?.onDeleteSection ? (
                 <button
                   className="markdown-heading-action-button markdown-heading-delete-button"
@@ -459,7 +471,7 @@ function renderMarkdownBlock(
               onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
             >
               <ChevronDown className="markdown-heading-icon" size={16} aria-hidden="true" />
-              <span className="markdown-heading-text">{renderInlineMarkdown(block.content)}</span>
+              <span className="markdown-heading-text">{renderInlineMarkdown(block.content, "inline", headingOptions?.loadImageAssetUrl)}</span>
             </button>
             {headingOptions.onDeleteSection ? (
               <button
@@ -497,7 +509,7 @@ function renderMarkdownBlock(
           <thead>
             <tr>
               {block.header.map((cell, cellIndex) => (
-                <th key={cellIndex}>{renderInlineMarkdown(cell)}</th>
+                <th key={cellIndex}>{renderInlineMarkdown(cell, "inline", headingOptions?.loadImageAssetUrl)}</th>
               ))}
             </tr>
           </thead>
@@ -505,7 +517,7 @@ function renderMarkdownBlock(
             {block.rows.map((row, rowIndex) => (
               <tr key={rowIndex}>
                 {row.map((cell, cellIndex) => (
-                  <td key={cellIndex}>{renderInlineMarkdown(cell)}</td>
+                  <td key={cellIndex}>{renderInlineMarkdown(cell, "inline", headingOptions?.loadImageAssetUrl)}</td>
                 ))}
               </tr>
             ))}
@@ -527,7 +539,7 @@ function renderMarkdownBlock(
         onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
       >
         {block.items.map((item, itemIndex) => (
-          <li key={itemIndex}>{renderInlineMarkdown(item)}</li>
+          <li key={itemIndex}>{renderInlineMarkdown(item, "inline", headingOptions?.loadImageAssetUrl)}</li>
         ))}
       </ul>
     );
@@ -545,7 +557,7 @@ function renderMarkdownBlock(
       key={block.key}
       onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
     >
-      {renderInlineMarkdown(block.content)}
+      {renderInlineMarkdown(block.content, "inline", headingOptions?.loadImageAssetUrl)}
     </p>
   );
 }
@@ -1202,7 +1214,11 @@ function getSectionBoundaryLevel(line: string): number | null | undefined {
   return match[1] ? Number(match[1]) : null;
 }
 
-function renderInlineMarkdown(text: string, keyPrefix = "inline"): ReactNode[] {
+function renderInlineMarkdown(
+  text: string,
+  keyPrefix = "inline",
+  loadImageAssetUrl?: (assetId: string) => Promise<string | null>,
+): ReactNode[] {
   const nodes: ReactNode[] = [];
   let index = 0;
   let textBuffer = "";
@@ -1230,6 +1246,22 @@ function renderInlineMarkdown(text: string, keyPrefix = "inline"): ReactNode[] {
       continue;
     }
 
+    const image = readMarkdownImage(text, index);
+
+    if (image) {
+      flushText();
+      nodes.push(
+        <MarkdownImage
+          altText={image.altText}
+          assetId={image.assetId}
+          key={`${keyPrefix}-image-${nodes.length}`}
+          loadImageAssetUrl={loadImageAssetUrl}
+        />,
+      );
+      index = image.end;
+      continue;
+    }
+
     const link = readMarkdownLink(text, index) ?? readAutolink(text, index) ?? readBareUrl(text, index);
 
     if (link) {
@@ -1244,7 +1276,9 @@ function renderInlineMarkdown(text: string, keyPrefix = "inline"): ReactNode[] {
             target="_blank"
             rel="noreferrer"
           >
-            {link.isMarkdownLink ? renderInlineMarkdown(link.label, `${keyPrefix}-link-${nodes.length}`) : link.label}
+            {link.isMarkdownLink
+              ? renderInlineMarkdown(link.label, `${keyPrefix}-link-${nodes.length}`, loadImageAssetUrl)
+              : link.label}
           </a>,
         );
       } else {
@@ -1261,7 +1295,7 @@ function renderInlineMarkdown(text: string, keyPrefix = "inline"): ReactNode[] {
       flushText();
       nodes.push(
         <strong key={`${keyPrefix}-strong-${nodes.length}`}>
-          {renderInlineMarkdown(strong.content, `${keyPrefix}-strong-${nodes.length}`)}
+          {renderInlineMarkdown(strong.content, `${keyPrefix}-strong-${nodes.length}`, loadImageAssetUrl)}
         </strong>,
       );
       index = strong.end;
@@ -1288,10 +1322,73 @@ type InlineLinkMatch = {
   isMarkdownLink: boolean;
 };
 
+type InlineImageMatch = {
+  altText: string;
+  assetId: string;
+  end: number;
+};
+
 type InlineStrongMatch = {
   content: string;
   end: number;
 };
+
+function MarkdownImage({
+  altText,
+  assetId,
+  loadImageAssetUrl,
+}: {
+  altText: string;
+  assetId: string;
+  loadImageAssetUrl?: (assetId: string) => Promise<string | null>;
+}) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let urlToRevoke: string | null = null;
+
+    if (!loadImageAssetUrl) {
+      setImageUrl(null);
+      return;
+    }
+
+    void loadImageAssetUrl(assetId).then((url) => {
+      if (disposed) {
+        if (url?.startsWith("blob:") && typeof URL.revokeObjectURL === "function") {
+          URL.revokeObjectURL(url);
+        }
+        return;
+      }
+
+      urlToRevoke = url;
+      setImageUrl(url);
+    });
+
+    return () => {
+      disposed = true;
+
+      if (urlToRevoke?.startsWith("blob:") && typeof URL.revokeObjectURL === "function") {
+        URL.revokeObjectURL(urlToRevoke);
+      }
+    };
+  }, [assetId, loadImageAssetUrl]);
+
+  if (!imageUrl) {
+    return <span className="markdown-image-fallback">{altText || "Image"}</span>;
+  }
+
+  return (
+    <img
+      className="markdown-image"
+      src={imageUrl}
+      alt={altText}
+      loading="lazy"
+      decoding="async"
+      draggable={false}
+    />
+  );
+}
 
 function readInlineCode(text: string, start: number): InlineCodeMatch | null {
   if (text[start] !== "`") {
@@ -1307,6 +1404,37 @@ function readInlineCode(text: string, start: number): InlineCodeMatch | null {
   return {
     content: text.slice(start + 1, end),
     end: end + 1,
+  };
+}
+
+function readMarkdownImage(text: string, start: number): InlineImageMatch | null {
+  if (!text.startsWith("![", start)) {
+    return null;
+  }
+
+  const altEnd = findUnescapedCharacter(text, "]", start + 2);
+
+  if (altEnd < start + 2 || text[altEnd + 1] !== "(") {
+    return null;
+  }
+
+  const hrefEnd = findUnescapedCharacter(text, ")", altEnd + 2);
+
+  if (hrefEnd < 0) {
+    return null;
+  }
+
+  const href = normalizeMarkdownLinkHref(text.slice(altEnd + 2, hrefEnd));
+  const assetId = getAssetIdFromHref(href);
+
+  if (!assetId) {
+    return null;
+  }
+
+  return {
+    altText: unescapeImageAltText(text.slice(start + 2, altEnd).trim()),
+    assetId,
+    end: hrefEnd + 1,
   };
 }
 
@@ -1434,6 +1562,10 @@ function trimTrailingUrlPunctuation(url: string): string {
 
 function isSafeLinkHref(href: string): boolean {
   return /^(https?:\/\/|mailto:)/i.test(href);
+}
+
+function unescapeImageAltText(value: string): string {
+  return value.replace(/\\]/g, "]").replace(/\\\\/g, "\\");
 }
 
 function normalizeLanguage(language: string | null, content: string): string {
