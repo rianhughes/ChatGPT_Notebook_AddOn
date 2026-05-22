@@ -30,6 +30,7 @@ type ThreadListProps = {
   newNotebookTitle: string;
   newFolderTitle: string;
   themeToggle: ReactNode;
+  autosaveControl?: ReactNode;
   selectedThreadId: string | null;
   isFullPage?: boolean;
   onFilterChange(filter: string): void;
@@ -55,6 +56,7 @@ export function ThreadList({
   newNotebookTitle,
   newFolderTitle,
   themeToggle,
+  autosaveControl,
   selectedThreadId,
   isFullPage = false,
   onFilterChange,
@@ -84,6 +86,7 @@ export function ThreadList({
   const [searchOpen, setSearchOpen] = useState(Boolean(normalizedFilter));
   const [createOpen, setCreateOpen] = useState(false);
   const [folderCreateOpen, setFolderCreateOpen] = useState(false);
+  const [notebookBarExpanded, setNotebookBarExpanded] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [folderExpansionOverrides, setFolderExpansionOverrides] = useState<Map<FolderDropTarget, boolean>>(
     () => new Map(),
@@ -101,6 +104,8 @@ export function ThreadList({
   const backupImportInputRef = useRef<HTMLInputElement | null>(null);
   const canCollapse = !isFullPage;
   const panelCollapsed = canCollapse && collapsed;
+  const backupToolsOpen = isFullPage && notebookBarExpanded;
+  const toolsOpen = !panelCollapsed && (searchOpen || createOpen || folderCreateOpen || backupToolsOpen);
 
   useEffect(() => {
     if (normalizedFilter) {
@@ -629,11 +634,19 @@ export function ThreadList({
             </span>
           </button>
         ) : (
-          <div className="thread-panel-title-button is-static">
+          <button
+            className={`thread-panel-title-button is-notebook-toggle${notebookBarExpanded ? " is-expanded" : ""}`}
+            type="button"
+            title={notebookBarExpanded ? "Hide notebook tools" : "Show notebook tools"}
+            aria-label={notebookBarExpanded ? "Hide notebook tools" : "Show notebook tools"}
+            aria-expanded={notebookBarExpanded}
+            aria-controls="notebook-list-tools"
+            onClick={() => setNotebookBarExpanded((isExpanded) => !isExpanded)}
+          >
             <span id="notebook-list-title" className="thread-panel-title">
               Notebooks
             </span>
-          </div>
+          </button>
         )}
         <div className="thread-panel-actions">
           <button
@@ -677,45 +690,13 @@ export function ThreadList({
               >
                 <FolderPlus size={17} aria-hidden="true" />
               </button>
-              <button
-                className="icon-button backup-export-button"
-                type="button"
-                title="Export all data"
-                aria-label="Export all data"
-                onClick={onExportBackup}
-              >
-                <FileDown size={17} aria-hidden="true" />
-              </button>
-              <button
-                className="icon-button backup-import-button"
-                type="button"
-                title="Import backup"
-                aria-label="Import backup"
-                onClick={() => backupImportInputRef.current?.click()}
-              >
-                <FileUp size={17} aria-hidden="true" />
-              </button>
-              <input
-                ref={backupImportInputRef}
-                className="sr-only"
-                type="file"
-                accept="application/json,.json"
-                onChange={(event) => {
-                  const file = event.currentTarget.files?.[0];
-                  event.currentTarget.value = "";
-
-                  if (file) {
-                    onImportBackup(file);
-                  }
-                }}
-              />
             </>
           ) : null}
           {themeToggle}
         </div>
       </div>
-      {!panelCollapsed && (searchOpen || createOpen || folderCreateOpen) ? (
-        <div className="thread-panel-tools">
+      {isFullPage || toolsOpen ? (
+        <div id="notebook-list-tools" className="thread-panel-tools" hidden={!toolsOpen}>
           {searchOpen ? (
             <SearchBox
               label="Search notebooks"
@@ -724,51 +705,94 @@ export function ThreadList({
               onChange={onFilterChange}
             />
           ) : null}
-          {createOpen ? (
-            <form className="notebook-create-form" onSubmit={onCreateNotebook}>
-              <label className="notebook-title-field">
-                <span className="sr-only">Notebook name</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={newNotebookTitle}
-                  placeholder="New notebook"
-                  onChange={(event) => onNewNotebookTitleChange(event.target.value)}
-                />
-              </label>
-              <button
-                className="icon-button notebook-create-button"
-                type="submit"
-                title="Create notebook"
-                aria-label="Create notebook"
-                disabled={!newNotebookTitle.trim()}
-              >
-                <Plus size={18} aria-hidden="true" />
-              </button>
-            </form>
-          ) : null}
-          {folderCreateOpen ? (
-            <form className="notebook-create-form" onSubmit={onCreateFolder}>
-              <label className="notebook-title-field">
-                <span className="sr-only">Folder name</span>
-                <input
-                  className="input"
-                  type="text"
-                  value={newFolderTitle}
-                  placeholder="New folder"
-                  onChange={(event) => onNewFolderTitleChange(event.target.value)}
-                />
-              </label>
-              <button
-                className="icon-button folder-create-button"
-                type="submit"
-                title="Create folder"
-                aria-label="Create folder"
-                disabled={!newFolderTitle.trim()}
-              >
-                <FolderPlus size={18} aria-hidden="true" />
-              </button>
-            </form>
+          {notebookBarExpanded || createOpen || folderCreateOpen ? (
+            <div className="notebook-tools-primary-row">
+              {notebookBarExpanded || createOpen ? (
+                <form className="notebook-create-form" onSubmit={onCreateNotebook}>
+                  <label className="notebook-title-field">
+                    <span className="sr-only">Notebook name</span>
+                    <input
+                      className="input"
+                      type="text"
+                      value={newNotebookTitle}
+                      placeholder="New notebook"
+                      onChange={(event) => onNewNotebookTitleChange(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="icon-button notebook-create-button"
+                    type="submit"
+                    title="Create notebook"
+                    aria-label="Create notebook"
+                    disabled={!newNotebookTitle.trim()}
+                  >
+                    <Plus size={18} aria-hidden="true" />
+                  </button>
+                </form>
+              ) : null}
+              {notebookBarExpanded || folderCreateOpen ? (
+                <form className="notebook-create-form" onSubmit={onCreateFolder}>
+                  <label className="notebook-title-field">
+                    <span className="sr-only">Folder name</span>
+                    <input
+                      className="input"
+                      type="text"
+                      value={newFolderTitle}
+                      placeholder="New folder"
+                      onChange={(event) => onNewFolderTitleChange(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="icon-button folder-create-button"
+                    type="submit"
+                    title="Create folder"
+                    aria-label="Create folder"
+                    disabled={!newFolderTitle.trim()}
+                  >
+                    <FolderPlus size={18} aria-hidden="true" />
+                  </button>
+                </form>
+              ) : null}
+              {backupToolsOpen ? (
+                <div className="notebook-tools-action-row" aria-label="Notebook backup tools">
+                  {autosaveControl}
+                  <button
+                    className="icon-button backup-export-button"
+                    type="button"
+                    title="Export all data"
+                    aria-label="Export all data"
+                    onClick={onExportBackup}
+                  >
+                    <FileDown size={17} aria-hidden="true" />
+                    <span>Export all data</span>
+                  </button>
+                  <button
+                    className="icon-button backup-import-button"
+                    type="button"
+                    title="Import all data"
+                    aria-label="Import all data"
+                    onClick={() => backupImportInputRef.current?.click()}
+                  >
+                    <FileUp size={17} aria-hidden="true" />
+                    <span>Import all data</span>
+                  </button>
+                  <input
+                    ref={backupImportInputRef}
+                    className="sr-only"
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = "";
+
+                      if (file) {
+                        onImportBackup(file);
+                      }
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

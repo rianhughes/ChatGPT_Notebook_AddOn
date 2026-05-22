@@ -200,6 +200,8 @@ button {
 }
 
 .app-feedback {
+  display: grid;
+  gap: 6px;
   min-height: 36px;
   border-top: 1px solid var(--color-border);
   padding: 10px 12px;
@@ -328,6 +330,27 @@ button {
   padding: 0 14px;
 }
 
+.thread-panel.is-full-page .thread-panel-title-button.is-notebook-toggle {
+  align-self: center;
+  min-height: 42px;
+  border-radius: 8px;
+  padding: 0 12px;
+  transition:
+    background 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease;
+}
+
+.thread-panel.is-full-page .thread-panel-title-button.is-notebook-toggle:hover,
+.thread-panel.is-full-page .thread-panel-title-button.is-notebook-toggle:focus-visible,
+.thread-panel.is-full-page .thread-panel-title-button.is-notebook-toggle.is-expanded {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 34%, transparent),
+    0 0 18px color-mix(in srgb, var(--color-accent) 28%, transparent);
+  outline: none;
+}
+
 .thread-panel.is-full-page .thread-panel-title {
   font-size: 16px;
 }
@@ -355,6 +378,49 @@ button {
   border-top: 1px solid var(--color-border);
   padding: 8px 12px;
   background: var(--color-surface);
+}
+
+.thread-panel-tools[hidden] {
+  display: none;
+}
+
+.notebook-tools-primary-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.notebook-tools-action-row {
+  display: flex;
+  min-width: max-content;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.notebook-tools-action-row .icon-button {
+  width: auto;
+  min-width: 0;
+  height: 34px;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .notebook-tools-primary-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .notebook-tools-action-row {
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
 }
 
 .thread-panel-body {
@@ -682,6 +748,93 @@ button {
   font-size: 12px;
 }
 
+.autosave-status {
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  padding: 0;
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
+  cursor: pointer;
+  outline: none;
+}
+
+.autosave-status:active {
+  transform: translateY(1px);
+}
+
+.autosave-status.is-pending {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.autosave-status.is-saving {
+  border-color: var(--color-accent);
+  background: var(--color-hover);
+  color: var(--color-accent);
+}
+
+.autosave-status.is-error {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.autosave-status:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.autosave-tooltip {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 0;
+  display: none;
+  width: min(280px, calc(100vw - 24px));
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: var(--color-surface-strong);
+  color: var(--color-control-text);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.notebook-detail-actions .autosave-tooltip,
+.thread-panel-actions .autosave-tooltip,
+.notebook-tools-action-row .autosave-tooltip {
+  right: 0;
+  left: auto;
+}
+
+.notebook-tools-action-row .autosave-tooltip {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+.autosave-status:hover .autosave-tooltip,
+.autosave-status:focus-visible .autosave-tooltip,
+.autosave-status:focus .autosave-tooltip {
+  display: grid;
+  gap: 3px;
+}
+
+.autosave-tooltip-title {
+  color: var(--color-heading);
+  font-weight: 700;
+}
+
+.autosave-tooltip-body {
+  color: var(--color-muted);
+}
+
 .message-toolbar {
   display: grid;
   gap: 10px;
@@ -870,6 +1023,10 @@ button {
 }
 
 .message-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
   min-height: 15px;
   margin: 10px 10px 0;
 }

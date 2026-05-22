@@ -1020,6 +1020,12 @@
         return typeof value.payload.sourceThreadId === "string" && typeof value.payload.sourceMessageKey === "string" && typeof value.payload.saved === "boolean";
       case "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES":
         return isOptionalCapturableSource(value.payload.source) && typeof value.payload.sourceThreadId === "string" && Array.isArray(value.payload.sourceMessageKeys) && value.payload.sourceMessageKeys.every((key) => typeof key === "string");
+      case "NOTEBOOK_DATA_CHANGED":
+        return typeof value.payload.reason === "string";
+      case "GET_AUTOSAVE_STATUS":
+        return true;
+      case "FORCE_AUTOSAVE":
+        return true;
       default:
         return false;
     }

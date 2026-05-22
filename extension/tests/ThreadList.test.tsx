@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -131,12 +131,52 @@ describe("ThreadList folders", () => {
       "thread-second",
     );
   });
+
+  it("keeps backup import and export in the expandable notebook bar tools", async () => {
+    const onExportBackup = vi.fn();
+
+    await renderThreadList({
+      onExportBackup,
+      autosaveControl: (
+        <button type="button" aria-label="Back up now">
+          Save
+        </button>
+      ),
+    });
+
+    expect(host?.querySelector('button[aria-label="Export all data"]')).toBeNull();
+    expect(host?.querySelector('button[aria-label="Import all data"]')).toBeNull();
+    expect(host?.querySelector('button[aria-label="Back up now"]')).toBeNull();
+
+    const tools = getContent("notebook-list-tools");
+    expect(tools.hidden).toBe(true);
+
+    await act(() => {
+      getButton("Show notebook tools").click();
+    });
+
+    expect(tools.hidden).toBe(false);
+    expect(host?.querySelector('input[placeholder="New notebook"]')).not.toBeNull();
+    expect(host?.querySelector('input[placeholder="New folder"]')).not.toBeNull();
+
+    getButton("Back up now");
+    getButton("Import all data");
+    const exportButton = getButton("Export all data");
+
+    await act(() => {
+      exportButton.click();
+    });
+
+    expect(onExportBackup).toHaveBeenCalledOnce();
+  });
 });
 
 type RenderThreadListOptions = {
   onRenameThread?: (threadId: string, title: string) => void;
   onRenameFolder?: (folderId: string, title: string) => void;
   onMoveThreadAfter?: (thread: ChatGptThread, afterThreadId: string | null) => void;
+  onExportBackup?: () => void;
+  autosaveControl?: ReactNode;
   threads?: ChatGptThread[];
 };
 
@@ -144,6 +184,8 @@ async function renderThreadList({
   onRenameThread = vi.fn(),
   onRenameFolder = vi.fn(),
   onMoveThreadAfter = vi.fn(),
+  onExportBackup = vi.fn(),
+  autosaveControl,
   threads = [
     thread({ id: "thread-work", title: "Work notebook", folderId: "work" }),
     thread({ id: "thread-loose", title: "Loose notebook", folderId: null }),
@@ -161,6 +203,7 @@ async function renderThreadList({
         newNotebookTitle=""
         newFolderTitle=""
         themeToggle={<button type="button">Theme</button>}
+        autosaveControl={autosaveControl}
         selectedThreadId={null}
         isFullPage
         onFilterChange={vi.fn()}
@@ -175,7 +218,7 @@ async function renderThreadList({
         onMoveThreadAfter={onMoveThreadAfter}
         onDeleteThread={vi.fn()}
         onDeleteFolder={vi.fn()}
-        onExportBackup={vi.fn()}
+        onExportBackup={onExportBackup}
         onImportBackup={vi.fn()}
       />,
     );
@@ -298,8 +341,6 @@ function thread(overrides: Partial<ChatGptThread>): ChatGptThread {
     sourceThreadId: "notebook:thread",
     title: "Notebook",
     folderId: null,
-    headMessageId: null,
-    tailMessageId: null,
     messageCount: 0,
     sortOrder: 0,
     createdAt: 1,

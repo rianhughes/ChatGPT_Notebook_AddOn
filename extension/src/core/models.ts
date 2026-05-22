@@ -8,8 +8,6 @@ export type ChatGptThread = {
   sourceThreadId: string;
   title: string;
   folderId?: string | null;
-  headMessageId: string | null;
-  tailMessageId: string | null;
   messageCount: number;
   sortOrder?: number;
   createdAt: number;
@@ -43,7 +41,13 @@ export type NotebookAsset = {
   updatedAt: number;
 };
 
-export type AppSettingKey = "activeSaveTargetThreadId";
+export type AppSettingKey =
+  | "activeSaveTargetThreadId"
+  | "dataRevision"
+  | "lastBackupRevision"
+  | "lastBackupAt"
+  | "lastBackupError"
+  | "lastDailyBackupDate";
 
 export type AppSetting = {
   key: AppSettingKey;
@@ -140,8 +144,7 @@ export type SavedMessage = {
   title?: string | null;
   contentMarkdown: string;
   contentText: string;
-  prevId: string | null;
-  nextId: string | null;
+  sortOrder: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -176,7 +179,7 @@ export type SaveChatGptMessageInput = {
 
 export type AppendMessageInput = Omit<
   SavedMessage,
-  "id" | "threadId" | "prevId" | "nextId" | "createdAt" | "updatedAt"
+  "id" | "threadId" | "sortOrder" | "createdAt" | "updatedAt"
 > & {
   id?: string;
   createdAt?: number;

@@ -59,6 +59,8 @@ Browser extension storage is removed when the extension is uninstalled. Use the 
 
 The full backup downloads a `chatgpt-notes-backup-YYYY-MM-DD.json` file. It includes folders, notebooks, notes, settings, pending ChatGPT note operations, and image assets. Keep this file outside the browser profile, then use the import button on the notebook list toolbar to restore it. Importing a full backup or a single-notebook JSON export merges it into the current extension database; matching notebooks and notes are updated, and unrelated current data is kept.
 
+The extension also writes automatic local backups after notebook data changes. Changes are saved to IndexedDB immediately, then a background backup runs after a short quiet period. Automatic backups are written to `ChatGPT Notes Backups/` in the browser downloads folder as `chatgpt-notes-autobackup-latest.json` plus one daily snapshot. Daily snapshots older than seven days are cleaned up after successful backups.
+
 ## Browser Support
 
 Firefox is the primary supported browser. Chrome support is available through the unpacked development build and requires Chrome 116 or newer.

@@ -5,7 +5,7 @@ import { filterMessagesBySearch } from "../src/core/search";
 import type { SavedMessage } from "../src/core/models";
 
 describe("sidebar selection copy behavior", () => {
-  it("copies selected visible messages in linked-list display order", () => {
+  it("copies selected visible messages in display order", () => {
     const orderedMessages = [
       message("a", "alpha"),
       message("b", "bravo match"),
@@ -29,8 +29,7 @@ function message(id: string, contentText: string): SavedMessage {
     role: "assistant",
     contentMarkdown: contentText,
     contentText,
-    prevId: null,
-    nextId: null,
+    sortOrder: 0,
     createdAt: 1,
     updatedAt: 1,
   };

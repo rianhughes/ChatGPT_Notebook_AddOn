@@ -16,6 +16,7 @@ import {
   getAssetsForThread,
   getFolders,
   getNotebookAsset,
+  getNotebookAutosaveMetadata,
   getMessagesInOrder,
   getNotebookBackupSnapshot,
   getSavedStateForVisibleMessages,
@@ -27,11 +28,13 @@ import {
   moveMessageAfterMessage,
   moveThreadAfterThread,
   moveThreadToFolder,
+  markNotebookBackupSucceeded,
   renameNotebook,
   renameFolder,
   renameThreadTitle,
   reorderMessage,
   reorderThread,
+  recordNotebookDataMutation,
   restoreDeletedMessage,
   restoreNotebookSnapshot,
   setActiveSaveTargetThread,
@@ -253,7 +256,7 @@ describe("repository", () => {
     expect(restoredMessages.map((message) => message.contentText)).toEqual(["alpha", "bravo", "charlie"]);
   });
 
-  it("reorders messages inside a notebook without losing linked-list integrity", async () => {
+  it("reorders messages inside a notebook without losing message order", async () => {
     const first = await appendSavedMessageFromChatGpt(saveInput("a", "alpha"));
     await appendSavedMessageFromChatGpt(saveInput("b", "bravo"));
     await appendSavedMessageFromChatGpt(saveInput("c", "charlie"));
@@ -407,6 +410,31 @@ describe("repository", () => {
     expect(await getThread(notebook.id)).toBeNull();
     expect(await getMessagesInOrder(notebook.id)).toEqual([]);
     expect(await getActiveSaveTargetThread()).toBeNull();
+  });
+
+  it("tracks autosave revisions separately from notebook data", async () => {
+    expect(await getNotebookAutosaveMetadata()).toMatchObject({
+      dataRevision: 0,
+      lastBackupRevision: 0,
+      lastBackupAt: null,
+      lastBackupError: null,
+    });
+
+    expect(await recordNotebookDataMutation()).toBe(1);
+    expect(await recordNotebookDataMutation()).toBe(2);
+
+    await markNotebookBackupSucceeded({
+      revision: 2,
+      backedUpAt: "2026-05-22T09:30:00.000Z",
+      dailyBackupDate: "2026-05-22",
+    });
+
+    expect(await getNotebookAutosaveMetadata()).toMatchObject({
+      dataRevision: 2,
+      lastBackupRevision: 2,
+      lastBackupAt: "2026-05-22T09:30:00.000Z",
+      lastDailyBackupDate: "2026-05-22",
+    });
   });
 
   it("merges a full backup snapshot without deleting current notebooks", async () => {

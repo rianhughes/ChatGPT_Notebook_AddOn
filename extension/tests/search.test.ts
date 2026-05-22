@@ -22,8 +22,7 @@ function message(id: string, contentText: string): SavedMessage {
     role: "assistant",
     contentMarkdown: contentText,
     contentText,
-    prevId: null,
-    nextId: null,
+    sortOrder: 0,
     createdAt: 1,
     updatedAt: 1,
   };

@@ -32,7 +32,7 @@ describe("notebook export", () => {
     expect(file.contents).toContain("```ts\nconst ok = true;\n```");
   });
 
-  it("formats a notebook as versioned JSON without linked-list pointers", () => {
+  it("formats a notebook as versioned JSON without internal order fields", () => {
     const data = createNotebookExportData(thread(), [message({ id: "m1", contentMarkdown: "" })], {
       now: Date.UTC(2026, 4, 21, 9, 30, 0),
     });
@@ -59,8 +59,7 @@ describe("notebook export", () => {
       ],
       assets: [],
     });
-    expect(parsed.messages[0]).not.toHaveProperty("prevId");
-    expect(parsed.messages[0]).not.toHaveProperty("nextId");
+    expect(parsed.messages[0]).not.toHaveProperty("sortOrder");
   });
 
   it("keeps export formats in a registry for the toolbar", () => {
@@ -74,8 +73,6 @@ function thread(): ChatGptThread {
     source: "chatgpt",
     sourceThreadId: "conversation-1",
     title: "Research Notes",
-    headMessageId: "m1",
-    tailMessageId: "m2",
     messageCount: 2,
     createdAt: Date.UTC(2026, 4, 20, 8, 0, 0),
     updatedAt: Date.UTC(2026, 4, 21, 8, 0, 0),
@@ -92,8 +89,7 @@ function message(input: Partial<SavedMessage>): SavedMessage {
     role: "assistant",
     contentMarkdown: "Markdown",
     contentText: "Fallback text",
-    prevId: null,
-    nextId: null,
+    sortOrder: 0,
     createdAt: Date.UTC(2026, 4, 21, 8, 0, 0),
     updatedAt: Date.UTC(2026, 4, 21, 8, 0, 0),
     ...input,

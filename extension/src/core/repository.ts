@@ -5,6 +5,7 @@ import { deleteExactTextFromMarkdown, markdownToPlainText } from "./markdown";
 import type {
   AiOperationPackage,
   AiOperationProposal,
+  AppSetting,
   AppendMessageInput,
   ChatGptThread,
   ChatGptThreadInput,
@@ -19,12 +20,12 @@ import type {
 } from "./models";
 import type { NotebookBackupSnapshot, RestoredNotebookBackupData } from "./notebookBackup";
 import {
-  appendMessage as appendMessageToState,
   getMessagesInOrder as orderMessages,
-  insertMessageAfter as insertMessageAfterInState,
-  insertMessageBefore as insertMessageBeforeInState,
-  moveMessageAfter,
-} from "./linkedList";
+  insertMessageAfter as insertMessageAfterInOrder,
+  insertMessageBySortOrder,
+  moveMessageAfter as moveMessageAfterInOrder,
+  renumberMessages,
+} from "./messageOrder";
 
 export type NotebookSnapshot = {
   thread: ChatGptThread;
@@ -46,6 +47,14 @@ export type NotebookBackupMergeResult = {
   settings: number;
   aiOperationProposals: number;
   assets: number;
+};
+
+export type NotebookAutosaveMetadata = {
+  dataRevision: number;
+  lastBackupRevision: number;
+  lastBackupAt: string | null;
+  lastBackupError: string | null;
+  lastDailyBackupDate: string | null;
 };
 
 export async function getAiOperationProposals(): Promise<AiOperationProposal[]> {
@@ -70,6 +79,77 @@ export async function getNotebookBackupSnapshot(): Promise<NotebookBackupSnapsho
     aiOperationProposals: aiOperationProposals.sort((left, right) => left.createdAt - right.createdAt),
     assets,
   };
+}
+
+export async function recordNotebookDataMutation(): Promise<number> {
+  return notesDb.transaction("rw", notesDb.settings, async () => {
+    const currentRevision = await getNumericSettingInTransaction("dataRevision");
+    const nextRevision = currentRevision + 1;
+
+    await notesDb.settings.put({
+      key: "dataRevision",
+      value: String(nextRevision),
+      updatedAt: Date.now(),
+    });
+    await notesDb.settings.delete("lastBackupError");
+
+    return nextRevision;
+  });
+}
+
+export async function getNotebookAutosaveMetadata(): Promise<NotebookAutosaveMetadata> {
+  const settings = await notesDb.settings.bulkGet([
+    "dataRevision",
+    "lastBackupRevision",
+    "lastBackupAt",
+    "lastBackupError",
+    "lastDailyBackupDate",
+  ]);
+
+  return {
+    dataRevision: toSettingNumber(settings[0]?.value),
+    lastBackupRevision: toSettingNumber(settings[1]?.value),
+    lastBackupAt: settings[2]?.value ?? null,
+    lastBackupError: settings[3]?.value ?? null,
+    lastDailyBackupDate: settings[4]?.value ?? null,
+  };
+}
+
+export async function markNotebookBackupSucceeded(input: {
+  revision: number;
+  backedUpAt: string;
+  dailyBackupDate: string;
+}): Promise<void> {
+  const timestamp = Date.now();
+
+  await notesDb.transaction("rw", notesDb.settings, async () => {
+    await notesDb.settings.bulkPut([
+      {
+        key: "lastBackupRevision",
+        value: String(input.revision),
+        updatedAt: timestamp,
+      },
+      {
+        key: "lastBackupAt",
+        value: input.backedUpAt,
+        updatedAt: timestamp,
+      },
+      {
+        key: "lastDailyBackupDate",
+        value: input.dailyBackupDate,
+        updatedAt: timestamp,
+      },
+    ]);
+    await notesDb.settings.delete("lastBackupError");
+  });
+}
+
+export async function markNotebookBackupFailed(error: string): Promise<void> {
+  await notesDb.settings.put({
+    key: "lastBackupError",
+    value: error,
+    updatedAt: Date.now(),
+  });
 }
 
 export async function mergeNotebookDataFromBackup(
@@ -140,16 +220,7 @@ export async function mergeNotebookDataFromBackup(
       }
 
       const finalMessagesByThreadId = new Map<string, SavedMessage[]>();
-      const incomingMessageById = new Map(
-        incomingMessages.map((message) => [
-          message.id,
-          {
-            ...message,
-            prevId: message.prevId ? messageIdMap.get(message.prevId) ?? message.prevId : null,
-            nextId: message.nextId ? messageIdMap.get(message.nextId) ?? message.nextId : null,
-          },
-        ]),
-      );
+      const incomingMessageById = new Map(incomingMessages.map((message) => [message.id, message]));
       const affectedThreadIds = new Set([
         ...incomingMessages.map((message) => message.threadId),
         ...backup.threads.map((thread) => threadIdMap.get(thread.id) ?? thread.id),
@@ -209,7 +280,7 @@ export async function mergeNotebookDataFromBackup(
           }
         }
 
-        const rebuilt = rebuildThreadMessageLinks(thread, orderedMessages);
+        const rebuilt = rebuildThreadMessageOrder(thread, orderedMessages);
         threadById.set(threadId, rebuilt.thread);
         finalMessagesByThreadId.set(threadId, rebuilt.messages);
       }
@@ -335,8 +406,6 @@ export async function getOrCreateChatGptThread(input: ChatGptThreadInput): Promi
       sourceThreadId: input.sourceThreadId,
       title: input.title || getDefaultSourceThreadTitle(input.source ?? "chatgpt"),
       folderId: null,
-      headMessageId: null,
-      tailMessageId: null,
       messageCount: 0,
       sortOrder: await getNextThreadSortOrderInTransaction(),
       createdAt: timestamp,
@@ -359,8 +428,6 @@ export async function createNotebook(input: NotebookInput): Promise<ChatGptThrea
       sourceThreadId: `notebook:${id}`,
       title: input.title.trim() || "Untitled notebook",
       folderId,
-      headMessageId: null,
-      tailMessageId: null,
       messageCount: 0,
       sortOrder: await getNextThreadSortOrderInTransaction(),
       createdAt: timestamp,
@@ -767,17 +834,13 @@ export async function restoreNotebookSnapshot(snapshot: NotebookSnapshot): Promi
     }
 
     const timestamp = Date.now();
-    const restoredMessages = snapshot.messages.map((message, index, messages) => ({
+    const restoredMessages = renumberMessages(snapshot.messages.map((message) => ({
       ...message,
       threadId: currentThread.id,
-      prevId: messages[index - 1]?.id ?? null,
-      nextId: messages[index + 1]?.id ?? null,
-    }));
+    })));
     const restoredThread: ChatGptThread = {
       ...currentThread,
       title: snapshot.thread.title,
-      headMessageId: restoredMessages[0]?.id ?? null,
-      tailMessageId: restoredMessages[restoredMessages.length - 1]?.id ?? null,
       messageCount: restoredMessages.length,
       updatedAt: timestamp,
     };
@@ -879,23 +942,17 @@ export async function deleteMessage(threadId: string, messageId: string): Promis
       return;
     }
 
-    const previous = node.prevId ? await notesDb.messages.get(node.prevId) : null;
-    const next = node.nextId ? await notesDb.messages.get(node.nextId) : null;
     const timestamp = Date.now();
+    const messages = orderMessages(thread, await notesDb.messages.where("threadId").equals(threadId).toArray());
+    const updatedMessages = renumberMessages(messages.filter((message) => message.id !== messageId));
     const updatedThread: ChatGptThread = {
       ...thread,
-      headMessageId: previous ? thread.headMessageId : next?.id ?? null,
-      tailMessageId: next ? thread.tailMessageId : previous?.id ?? null,
-      messageCount: Math.max(0, thread.messageCount - 1),
+      messageCount: updatedMessages.length,
       updatedAt: timestamp,
     };
 
-    if (previous) {
-      await notesDb.messages.put({ ...previous, nextId: next?.id ?? null, updatedAt: timestamp });
-    }
-
-    if (next) {
-      await notesDb.messages.put({ ...next, prevId: previous?.id ?? null, updatedAt: timestamp });
+    if (updatedMessages.length > 0) {
+      await notesDb.messages.bulkPut(updatedMessages);
     }
 
     await notesDb.messages.delete(messageId);
@@ -926,26 +983,23 @@ export async function restoreDeletedMessage(message: SavedMessage): Promise<Save
     }
 
     const messages = await notesDb.messages.where("threadId").equals(message.threadId).toArray();
-    const messageIds = new Set(messages.map((item) => item.id));
     const timestamp = Date.now();
     const restoredMessage: SavedMessage = {
       ...message,
-      prevId: null,
-      nextId: null,
       updatedAt: timestamp,
     };
-    const state = { thread, messages };
-    const nextState =
-      message.prevId && messageIds.has(message.prevId)
-        ? insertMessageAfterInState(state, message.prevId, restoredMessage)
-        : message.nextId && messageIds.has(message.nextId)
-          ? insertMessageBeforeInState(state, message.nextId, restoredMessage)
-          : appendMessageToState(state, restoredMessage);
+    const orderedMessages = orderMessages(thread, messages);
+    const updatedMessages = insertMessageBySortOrder(orderedMessages, restoredMessage);
+    const updatedThread: ChatGptThread = {
+      ...thread,
+      messageCount: updatedMessages.length,
+      updatedAt: timestamp,
+    };
 
-    await notesDb.messages.bulkPut(nextState.messages);
-    await notesDb.threads.put(nextState.thread);
+    await notesDb.messages.bulkPut(updatedMessages);
+    await notesDb.threads.put(updatedThread);
 
-    return nextState.messages.find((item) => item.id === restoredMessage.id) ?? restoredMessage;
+    return updatedMessages.find((item) => item.id === restoredMessage.id) ?? restoredMessage;
   });
 }
 
@@ -974,13 +1028,14 @@ export async function reorderMessage(
 
     const afterMessageId =
       direction === "up" ? orderedMessages[currentIndex - 2]?.id ?? null : orderedMessages[targetIndex].id;
-    const nextState = moveMessageAfter({ thread, messages }, messageId, afterMessageId);
     const timestamp = Date.now();
+    const movedMessages = moveMessageAfterInOrder(orderedMessages, messageId, afterMessageId);
     const updatedThread: ChatGptThread = {
-      ...nextState.thread,
+      ...thread,
+      messageCount: movedMessages.length,
       updatedAt: timestamp,
     };
-    const updatedMessages = nextState.messages.map((message) =>
+    const updatedMessages = movedMessages.map((message) =>
       message.id === messageId ? { ...message, updatedAt: timestamp } : message,
     );
 
@@ -1009,13 +1064,14 @@ export async function moveMessageAfterMessage(
       throw new Error(`Missing target message ${afterMessageId}`);
     }
 
-    const nextState = moveMessageAfter({ thread, messages }, messageId, afterMessageId);
     const timestamp = Date.now();
+    const movedMessages = moveMessageAfterInOrder(orderedMessages, messageId, afterMessageId);
     const updatedThread: ChatGptThread = {
-      ...nextState.thread,
+      ...thread,
+      messageCount: movedMessages.length,
       updatedAt: timestamp,
     };
-    const updatedMessages = nextState.messages.map((message) =>
+    const updatedMessages = movedMessages.map((message) =>
       message.id === messageId ? { ...message, updatedAt: timestamp } : message,
     );
 
@@ -1028,7 +1084,7 @@ export async function moveMessageAfterMessage(
 
 export async function mergeMessages(threadId: string, messageIds: string[]): Promise<SavedMessage | null> {
   return notesDb.transaction("rw", notesDb.threads, notesDb.messages, async () => {
-    let thread = await requireThread(threadId);
+    const thread = await requireThread(threadId);
     const selectedIds = new Set(messageIds);
 
     if (selectedIds.size < 2) {
@@ -1036,7 +1092,8 @@ export async function mergeMessages(threadId: string, messageIds: string[]): Pro
     }
 
     const messages = await notesDb.messages.where("threadId").equals(threadId).toArray();
-    const selectedMessages = orderMessages(thread, messages).filter((message) => selectedIds.has(message.id));
+    const orderedMessages = orderMessages(thread, messages);
+    const selectedMessages = orderedMessages.filter((message) => selectedIds.has(message.id));
 
     if (selectedMessages.length < 2) {
       return null;
@@ -1059,21 +1116,20 @@ export async function mergeMessages(threadId: string, messageIds: string[]): Pro
       contentHash: contentHashFromParts({ contentMarkdown: mergedMarkdown, contentText }),
       updatedAt: timestamp,
     };
+    const mergedMessages = renumberMessages(
+      orderedMessages
+        .filter((message) => !selectedIds.has(message.id) || message.id === primaryMessage.id)
+        .map((message) => (message.id === primaryMessage.id ? mergedMessage : message)),
+    );
+    const deletedMessageIds = selectedMessages.slice(1).map((message) => message.id);
 
-    await notesDb.messages.put(mergedMessage);
-
-    for (const message of selectedMessages.slice(1)) {
-      const node = await notesDb.messages.get(message.id);
-
-      if (!node || node.threadId !== threadId) {
-        continue;
-      }
-
-      thread = await deleteMessageFromThreadInTransaction(thread, node, timestamp);
+    if (deletedMessageIds.length > 0) {
+      await notesDb.messages.bulkDelete(deletedMessageIds);
     }
 
-    await notesDb.threads.put({ ...thread, updatedAt: timestamp });
-    return mergedMessage;
+    await notesDb.messages.bulkPut(mergedMessages);
+    await notesDb.threads.put({ ...thread, messageCount: mergedMessages.length, updatedAt: timestamp });
+    return mergedMessages.find((message) => message.id === mergedMessage.id) ?? mergedMessage;
   });
 }
 
@@ -1218,8 +1274,6 @@ async function getOrCreateThreadInTransaction(input: ChatGptThreadInput): Promis
     sourceThreadId: input.sourceThreadId,
     title: input.title || getDefaultSourceThreadTitle(source),
     folderId: null,
-    headMessageId: null,
-    tailMessageId: null,
     messageCount: 0,
     sortOrder: await getNextThreadSortOrderInTransaction(),
     createdAt: timestamp,
@@ -1254,21 +1308,15 @@ function getMessagesInBestEffortOrder(thread: ChatGptThread, messages: SavedMess
   }
 }
 
-function rebuildThreadMessageLinks(
+function rebuildThreadMessageOrder(
   thread: ChatGptThread,
   messages: SavedMessage[],
 ): { thread: ChatGptThread; messages: SavedMessage[] } {
-  const rebuiltMessages = messages.map((message, index) => ({
-    ...message,
-    prevId: messages[index - 1]?.id ?? null,
-    nextId: messages[index + 1]?.id ?? null,
-  }));
+  const rebuiltMessages = renumberMessages(messages);
 
   return {
     thread: {
       ...thread,
-      headMessageId: rebuiltMessages[0]?.id ?? null,
-      tailMessageId: rebuiltMessages[rebuiltMessages.length - 1]?.id ?? null,
       messageCount: rebuiltMessages.length,
       updatedAt: Math.max(thread.updatedAt, ...rebuiltMessages.map((message) => message.updatedAt), 0),
     },
@@ -1344,31 +1392,35 @@ function getFolderSortOrder(folder: NotebookFolder): number {
   return typeof folder.sortOrder === "number" ? folder.sortOrder : -folder.updatedAt;
 }
 
+async function getNumericSettingInTransaction(key: AppSetting["key"]): Promise<number> {
+  const setting = await notesDb.settings.get(key);
+  return toSettingNumber(setting?.value);
+}
+
+function toSettingNumber(value: string | null | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 async function appendMessageInTransaction(
   thread: ChatGptThread,
   message: SavedMessage,
   timestamp: number,
 ): Promise<ChatGptThread> {
+  const messages = orderMessages(thread, await notesDb.messages.where("threadId").equals(thread.id).toArray());
+  const updatedMessages = renumberMessages([...messages, message]);
   const updatedThread: ChatGptThread = {
     ...thread,
-    headMessageId: thread.headMessageId ?? message.id,
-    tailMessageId: message.id,
-    messageCount: thread.messageCount + 1,
+    messageCount: updatedMessages.length,
     updatedAt: timestamp,
   };
+  const storedMessage = updatedMessages.find((item) => item.id === message.id);
 
-  if (thread.tailMessageId) {
-    const tail = await notesDb.messages.get(thread.tailMessageId);
-
-    if (!tail || tail.threadId !== thread.id) {
-      throw new Error("Cannot append message because thread tail is corrupt");
-    }
-
-    await notesDb.messages.put({ ...tail, nextId: message.id, updatedAt: timestamp });
-    message.prevId = tail.id;
+  if (storedMessage) {
+    Object.assign(message, storedMessage);
   }
 
-  await notesDb.messages.add(message);
+  await notesDb.messages.bulkPut(updatedMessages);
   await notesDb.threads.put(updatedThread);
   return updatedThread;
 }
@@ -1385,52 +1437,21 @@ async function insertMessageAfterInTransaction(
     return null;
   }
 
-  const next = after.nextId ? await notesDb.messages.get(after.nextId) : null;
+  const messages = orderMessages(thread, await notesDb.messages.where("threadId").equals(thread.id).toArray());
+  const updatedMessages = insertMessageAfterInOrder(messages, message, afterMessageId);
   const updatedThread: ChatGptThread = {
     ...thread,
-    tailMessageId: next ? thread.tailMessageId : message.id,
-    messageCount: thread.messageCount + 1,
+    messageCount: updatedMessages.length,
     updatedAt: timestamp,
   };
+  const storedMessage = updatedMessages.find((item) => item.id === message.id);
 
-  message.prevId = after.id;
-  message.nextId = next?.id ?? null;
-
-  await notesDb.messages.put({ ...after, nextId: message.id, updatedAt: timestamp });
-
-  if (next) {
-    await notesDb.messages.put({ ...next, prevId: message.id, updatedAt: timestamp });
+  if (storedMessage) {
+    Object.assign(message, storedMessage);
   }
 
-  await notesDb.messages.add(message);
+  await notesDb.messages.bulkPut(updatedMessages);
   await notesDb.threads.put(updatedThread);
-  return updatedThread;
-}
-
-async function deleteMessageFromThreadInTransaction(
-  thread: ChatGptThread,
-  node: SavedMessage,
-  timestamp: number,
-): Promise<ChatGptThread> {
-  const previous = node.prevId ? await notesDb.messages.get(node.prevId) : null;
-  const next = node.nextId ? await notesDb.messages.get(node.nextId) : null;
-  const updatedThread: ChatGptThread = {
-    ...thread,
-    headMessageId: previous ? thread.headMessageId : next?.id ?? null,
-    tailMessageId: next ? thread.tailMessageId : previous?.id ?? null,
-    messageCount: Math.max(0, thread.messageCount - 1),
-    updatedAt: timestamp,
-  };
-
-  if (previous) {
-    await notesDb.messages.put({ ...previous, nextId: next?.id ?? null, updatedAt: timestamp });
-  }
-
-  if (next) {
-    await notesDb.messages.put({ ...next, prevId: previous?.id ?? null, updatedAt: timestamp });
-  }
-
-  await notesDb.messages.delete(node.id);
   return updatedThread;
 }
 
@@ -1460,8 +1481,7 @@ function createSavedMessage(
       normalizeMessageTitle(input.title) || getDefaultMessageTitle(input.contentMarkdown || input.contentText),
     contentMarkdown: input.contentMarkdown,
     contentText: input.contentText,
-    prevId: null,
-    nextId: null,
+    sortOrder: 0,
     createdAt: input.createdAt ?? timestamp,
     updatedAt: input.updatedAt ?? timestamp,
   };

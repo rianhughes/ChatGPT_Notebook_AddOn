@@ -8,6 +8,7 @@ import {
 } from "../browser/tabs";
 import {
   type ExtensionMessage,
+  type AutosaveStatusResponse,
   type InsertTextInChatGptResponse,
   type OpenSidebarWindowResponse,
   type SaveChatGptMessageResponse,
@@ -22,6 +23,7 @@ import {
   setActiveSaveTargetThread,
 } from "../core/repository";
 import { createSidebarAdapter } from "./sidebarAdapter";
+import { forceNotebookAutosave, getAutosaveStatus, noteNotebookDataChanged } from "./autosave";
 import { initializeDetachedSidebarWindowTracking, openDetachedSidebarWindow } from "./sidebarWindow";
 
 type ActionClickTab = {
@@ -60,6 +62,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
   switch (message.type) {
     case "SAVE_CHATGPT_MESSAGE": {
       const result = await appendSavedMessageFromChatGpt(message.payload);
+      await noteNotebookDataChanged();
       const response: SaveChatGptMessageResponse = {
         sourceThreadId: message.payload.sourceThreadId,
         sourceMessageKey: result.message.sourceMessageKey,
@@ -91,6 +94,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       return getActiveSaveTargetThread();
     case "SET_ACTIVE_SAVE_TARGET": {
       const thread = await setActiveSaveTargetThread(message.payload.threadId);
+      await noteNotebookDataChanged();
 
       await broadcastToChatGptTabs({
         type: "ACTIVE_SAVE_TARGET_CHANGED",
@@ -115,6 +119,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
     case "SUBMIT_AI_OPERATION_PACKAGE": {
       try {
         const proposal = await saveAiOperationProposal(message.payload);
+        await noteNotebookDataChanged();
 
         try {
           await openDetachedSidebarWindow();
@@ -144,6 +149,13 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
         } satisfies OpenSidebarWindowResponse;
       }
     }
+    case "NOTEBOOK_DATA_CHANGED":
+      await noteNotebookDataChanged();
+      return getAutosaveStatus();
+    case "GET_AUTOSAVE_STATUS":
+      return getAutosaveStatus() satisfies Promise<AutosaveStatusResponse>;
+    case "FORCE_AUTOSAVE":
+      return forceNotebookAutosave() satisfies Promise<AutosaveStatusResponse>;
     case "CHATGPT_THREAD_CHANGED":
     case "SAVE_CHATGPT_MESSAGE_RESULT":
     case "ACTIVE_SAVE_TARGET_CHANGED":

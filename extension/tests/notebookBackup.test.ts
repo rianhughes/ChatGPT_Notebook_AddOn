@@ -38,6 +38,7 @@ describe("notebook backup", () => {
       app: "chatgpt-notes-sidebar",
       backupVersion: 1,
       exportedAt: "2026-05-22T09:30:00.000Z",
+      dataRevision: 0,
       counts: {
         folders: 1,
         threads: 1,
@@ -81,8 +82,6 @@ describe("notebook backup", () => {
     expect(restored.threads[0]).toMatchObject({
       id: "thread-1",
       title: "Research Notes",
-      headMessageId: "message-1",
-      tailMessageId: "message-1",
       messageCount: 1,
     });
     expect(restored.messages[0]).toMatchObject({
@@ -90,8 +89,7 @@ describe("notebook backup", () => {
       threadId: "thread-1",
       sourceMessageKey: "source-key",
       contentMarkdown: "Markdown",
-      prevId: null,
-      nextId: null,
+      sortOrder: 0,
     });
   });
 });
@@ -134,8 +132,6 @@ function thread(): ChatGptThread {
     sourceThreadId: "conversation-1",
     title: "Research Notes",
     folderId: "folder-1",
-    headMessageId: "message-1",
-    tailMessageId: "message-1",
     messageCount: 1,
     sortOrder: 0,
     createdAt: Date.UTC(2026, 4, 21, 8, 0, 0),
@@ -154,8 +150,7 @@ function message(): SavedMessage {
     title: "Markdown",
     contentMarkdown: "Markdown",
     contentText: "Markdown",
-    prevId: null,
-    nextId: null,
+    sortOrder: 0,
     createdAt: Date.UTC(2026, 4, 21, 8, 0, 0),
     updatedAt: Date.UTC(2026, 4, 21, 8, 0, 0),
   };

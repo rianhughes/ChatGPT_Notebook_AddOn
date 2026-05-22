@@ -19,7 +19,10 @@ export type RuntimeMessageType =
   | "INSERT_TEXT_IN_CHATGPT"
   | "SUBMIT_AI_OPERATION_PACKAGE"
   | "SOURCE_MESSAGE_SAVED_STATE_CHANGED"
-  | "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES";
+  | "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES"
+  | "NOTEBOOK_DATA_CHANGED"
+  | "GET_AUTOSAVE_STATUS"
+  | "FORCE_AUTOSAVE";
 
 export type ChatGptThreadChangedMessage = {
   type: "CHATGPT_THREAD_CHANGED";
@@ -98,6 +101,21 @@ export type RequestSavedStateForVisibleMessagesMessage = {
   };
 };
 
+export type NotebookDataChangedMessage = {
+  type: "NOTEBOOK_DATA_CHANGED";
+  payload: { reason: string };
+};
+
+export type GetAutosaveStatusMessage = {
+  type: "GET_AUTOSAVE_STATUS";
+  payload: Record<string, never>;
+};
+
+export type ForceAutosaveMessage = {
+  type: "FORCE_AUTOSAVE";
+  payload: Record<string, never>;
+};
+
 export type ExtensionMessage =
   | ChatGptThreadChangedMessage
   | SaveChatGptMessage
@@ -110,7 +128,10 @@ export type ExtensionMessage =
   | InsertTextInChatGptMessage
   | SubmitAiOperationPackageMessage
   | SourceMessageSavedStateChangedMessage
-  | RequestSavedStateForVisibleMessagesMessage;
+  | RequestSavedStateForVisibleMessagesMessage
+  | NotebookDataChangedMessage
+  | GetAutosaveStatusMessage
+  | ForceAutosaveMessage;
 
 export type SaveChatGptMessageResponse = {
   sourceThreadId: string;
@@ -139,6 +160,16 @@ export type SubmitAiOperationPackageResponse = {
   queued: boolean;
   proposalId?: string;
   error?: string;
+};
+
+export type AutosaveStatusState = "idle" | "pending" | "saving" | "error";
+
+export type AutosaveStatusResponse = {
+  state: AutosaveStatusState;
+  dataRevision: number;
+  lastBackupRevision: number;
+  lastBackupAt: string | null;
+  lastBackupError: string | null;
 };
 
 export function isExtensionMessage(value: unknown): value is ExtensionMessage {
@@ -197,6 +228,12 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
         Array.isArray(value.payload.sourceMessageKeys) &&
         value.payload.sourceMessageKeys.every((key) => typeof key === "string")
       );
+    case "NOTEBOOK_DATA_CHANGED":
+      return typeof value.payload.reason === "string";
+    case "GET_AUTOSAVE_STATUS":
+      return true;
+    case "FORCE_AUTOSAVE":
+      return true;
     default:
       return false;
   }

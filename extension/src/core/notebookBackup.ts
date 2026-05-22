@@ -6,6 +6,7 @@ import type {
   NotebookFolder,
   SavedMessage,
 } from "./models";
+import { renumberMessages } from "./messageOrder";
 import type { NotebookExportData } from "./notebookExport";
 
 const BACKUP_APP_ID = "chatgpt-notes-sidebar";
@@ -19,6 +20,7 @@ export type NotebookBackupData = {
   app: typeof BACKUP_APP_ID;
   backupVersion: typeof BACKUP_VERSION;
   exportedAt: string;
+  dataRevision: number;
   counts: {
     folders: number;
     threads: number;
@@ -60,7 +62,7 @@ export type RestoredNotebookBackupData = Omit<NotebookBackupData, "assets"> & {
 
 export async function createNotebookBackupData(
   snapshot: NotebookBackupSnapshot,
-  options: { now?: number | Date } = {},
+  options: { now?: number | Date; dataRevision?: number } = {},
 ): Promise<NotebookBackupData> {
   const assets = await Promise.all(
     snapshot.assets.map(async (asset) => ({
@@ -85,6 +87,7 @@ export async function createNotebookBackupData(
     app: BACKUP_APP_ID,
     backupVersion: BACKUP_VERSION,
     exportedAt: toIsoString(options.now ?? Date.now()),
+    dataRevision: options.dataRevision ?? getSnapshotDataRevision(snapshot),
     counts: {
       folders: snapshot.folders.length,
       threads: snapshot.threads.length,
@@ -156,6 +159,7 @@ async function restoreNotebookBackupData(
     app: BACKUP_APP_ID,
     backupVersion: BACKUP_VERSION,
     exportedAt: typeof parsed.exportedAt === "string" ? parsed.exportedAt : toIsoString(Date.now()),
+    dataRevision: typeof parsed.dataRevision === "number" ? parsed.dataRevision : getParsedDataRevision(parsed),
     counts: {
       folders: parsed.folders.length,
       threads: parsed.threads.length,
@@ -195,7 +199,7 @@ async function restoreNotebookExportData(data: NotebookExportData): Promise<Rest
   assertArray(data.assets, "assets");
 
   const messages = [...data.messages].sort((left, right) => left.position - right.position);
-  const restoredMessages: SavedMessage[] = messages.map((message, index) => ({
+  const restoredMessages = renumberMessages(messages.map((message) => ({
     id: message.id,
     threadId: data.thread.id,
     sourceMessageId: message.sourceMessageId,
@@ -205,19 +209,15 @@ async function restoreNotebookExportData(data: NotebookExportData): Promise<Rest
     title: null,
     contentMarkdown: message.contentMarkdown,
     contentText: message.contentText,
-    prevId: messages[index - 1]?.id ?? null,
-    nextId: messages[index + 1]?.id ?? null,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
-  }));
+  })));
   const restoredThread: ChatGptThread = {
     id: data.thread.id,
     source: data.thread.source,
     sourceThreadId: data.thread.sourceThreadId,
     title: data.thread.title,
     folderId: null,
-    headMessageId: restoredMessages[0]?.id ?? null,
-    tailMessageId: restoredMessages[restoredMessages.length - 1]?.id ?? null,
     messageCount: restoredMessages.length,
     createdAt: data.thread.createdAt,
     updatedAt: data.thread.updatedAt,
@@ -243,6 +243,7 @@ async function restoreNotebookExportData(data: NotebookExportData): Promise<Rest
     app: BACKUP_APP_ID,
     backupVersion: BACKUP_VERSION,
     exportedAt: data.exportedAt,
+    dataRevision: 0,
     counts: {
       folders: 0,
       threads: 1,
@@ -332,4 +333,14 @@ function assertArray(value: unknown, name: string): asserts value is unknown[] {
 
 function toIsoString(value: number | Date): string {
   return new Date(value).toISOString();
+}
+
+function getSnapshotDataRevision(snapshot: NotebookBackupSnapshot): number {
+  const revision = Number(snapshot.settings.find((setting) => setting.key === "dataRevision")?.value ?? 0);
+  return Number.isFinite(revision) ? revision : 0;
+}
+
+function getParsedDataRevision(parsed: Partial<NotebookBackupData>): number {
+  const revision = Number(parsed.settings?.find((setting) => setting.key === "dataRevision")?.value ?? 0);
+  return Number.isFinite(revision) ? revision : 0;
 }

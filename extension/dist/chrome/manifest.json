@@ -9,7 +9,7 @@
     "48": "icon.png",
     "128": "icon.png"
   },
-  "permissions": ["sidePanel", "scripting", "storage", "tabs", "clipboardWrite"],
+  "permissions": ["sidePanel", "scripting", "storage", "tabs", "clipboardWrite", "downloads"],
   "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://deepwiki.com/*"],
   "background": {
     "service_worker": "background.js"

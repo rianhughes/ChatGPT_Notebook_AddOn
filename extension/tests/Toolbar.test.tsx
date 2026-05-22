@@ -159,8 +159,6 @@ function thread(): ChatGptThread {
     sourceThreadId: "notebook:thread",
     title: "Notebook",
     folderId: null,
-    headMessageId: null,
-    tailMessageId: null,
     messageCount: 0,
     sortOrder: 0,
     createdAt: 1,

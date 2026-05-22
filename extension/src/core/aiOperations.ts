@@ -54,7 +54,7 @@ async function applyAiOperation(operation: AiNotebookOperation): Promise<void> {
         contentText,
       });
 
-      if (operation.afterMessageId !== undefined && operation.afterMessageId !== created.prevId) {
+      if (operation.afterMessageId !== undefined) {
         await moveMessageAfterMessage(operation.threadId, created.id, operation.afterMessageId ?? null);
       }
       return;

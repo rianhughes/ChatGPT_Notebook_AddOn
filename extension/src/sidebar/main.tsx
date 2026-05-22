@@ -2,11 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import {
   ArrowLeft,
+  Check,
   ChevronDown,
+  Circle,
+  Clock,
   ListCollapse,
   Moon,
   Sun,
   Sunset,
+  TriangleAlert,
   UnfoldVertical,
 } from "lucide-react";
 
@@ -17,6 +21,7 @@ import { createAssetMarkdown } from "../core/assets";
 import type {
   ActiveChatGptContextResponse,
   ActiveSaveTargetResponse,
+  AutosaveStatusResponse,
   InsertTextInChatGptResponse,
   OpenSidebarWindowResponse,
 } from "../core/ports";
@@ -131,6 +136,7 @@ function App() {
   const knownDefaultCollapsedMessageIdsRef = useRef<Set<string>>(new Set());
   const [isNotebookToolsOpen, setIsNotebookToolsOpen] = useState(false);
   const [aiOperationProposals, setAiOperationProposals] = useState<AiOperationProposal[]>([]);
+  const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatusResponse | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
@@ -177,6 +183,61 @@ function App() {
     return proposals;
   }, []);
 
+  const loadAutosaveStatus = useCallback(async () => {
+    try {
+      const nextStatus = await sendRuntimeMessage<AutosaveStatusResponse>({
+        type: "GET_AUTOSAVE_STATUS",
+        payload: {},
+      });
+
+      setAutosaveStatus(nextStatus);
+      return nextStatus;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const notifyNotebookDataChanged = useCallback(
+    async (reason: string) => {
+      try {
+        const nextStatus = await sendRuntimeMessage<AutosaveStatusResponse>({
+          type: "NOTEBOOK_DATA_CHANGED",
+          payload: { reason },
+        });
+
+        setAutosaveStatus(nextStatus);
+      } catch {
+        setAutosaveStatus({
+          state: "error",
+          dataRevision: 0,
+          lastBackupRevision: 0,
+          lastBackupAt: null,
+          lastBackupError: "Could not schedule automatic backup.",
+        });
+      }
+    },
+    [],
+  );
+
+  const forceAutosave = useCallback(async () => {
+    try {
+      const nextStatus = await sendRuntimeMessage<AutosaveStatusResponse>({
+        type: "FORCE_AUTOSAVE",
+        payload: {},
+      });
+
+      setAutosaveStatus(nextStatus);
+    } catch {
+      setAutosaveStatus((currentStatus) => ({
+        state: "error",
+        dataRevision: currentStatus?.dataRevision ?? 0,
+        lastBackupRevision: currentStatus?.lastBackupRevision ?? 0,
+        lastBackupAt: currentStatus?.lastBackupAt ?? null,
+        lastBackupError: "Could not start automatic backup.",
+      }));
+    }
+  }, []);
+
   const loadMessages = useCallback(async (threadId: string | null) => {
     if (!threadId) {
       setMessages([]);
@@ -198,7 +259,7 @@ function App() {
 
   useEffect(() => {
     void (async () => {
-      await Promise.all([loadThreads(), loadFolders(), loadAiOperationProposals()]);
+      await Promise.all([loadThreads(), loadFolders(), loadAiOperationProposals(), loadAutosaveStatus()]);
 
       try {
         const activeSaveTarget = await sendRuntimeMessage<ActiveSaveTargetResponse>({
@@ -237,7 +298,7 @@ function App() {
 
       setSelectedThreadId(null);
     })();
-  }, [loadAiOperationProposals, loadFolders, loadThreads]);
+  }, [loadAiOperationProposals, loadAutosaveStatus, loadFolders, loadThreads]);
 
   useEffect(() => {
     setSelectedMergeMessageIds((current) => {
@@ -290,6 +351,7 @@ function App() {
       void loadThreads();
       void loadFolders();
       void loadAiOperationProposals();
+      void loadAutosaveStatus();
 
       if (isNotebookDetailVisible) {
         void loadMessages(selectedThreadId);
@@ -297,7 +359,15 @@ function App() {
     }, 1500);
 
     return () => window.clearInterval(intervalId);
-  }, [isNotebookDetailVisible, loadAiOperationProposals, loadFolders, loadMessages, loadThreads, selectedThreadId]);
+  }, [
+    isNotebookDetailVisible,
+    loadAiOperationProposals,
+    loadAutosaveStatus,
+    loadFolders,
+    loadMessages,
+    loadThreads,
+    selectedThreadId,
+  ]);
 
   function resetCollapsedMessages() {
     defaultCollapsedThreadIdRef.current = null;
@@ -351,6 +421,7 @@ function App() {
 
     setError("");
     await createNotebook({ title });
+    void notifyNotebookDataChanged("notebook-created");
     setNewNotebookTitle("");
     await loadThreads();
     setStatus("Notebook created");
@@ -368,6 +439,7 @@ function App() {
 
     try {
       const folder = await createFolder({ title });
+      void notifyNotebookDataChanged("folder-created");
       setNewFolderTitle("");
       await loadFolders();
       setStatus(`Folder created: ${folder.title}`);
@@ -390,6 +462,7 @@ function App() {
 
     try {
       await deleteThread(thread.id);
+      void notifyNotebookDataChanged("notebook-deleted");
       await loadThreads();
       resetCollapsedMessages();
       setMessageUndoHistory({});
@@ -418,6 +491,7 @@ function App() {
 
     try {
       const updatedThread = await moveThreadToFolder(thread.id, folderId);
+      void notifyNotebookDataChanged("notebook-moved-to-folder");
       await loadThreads();
       const folder = folderId ? folders.find((item) => item.id === folderId) : null;
       setStatus(
@@ -434,6 +508,7 @@ function App() {
 
     try {
       await moveThreadAfterThread(thread.id, afterThreadId);
+      void notifyNotebookDataChanged("notebook-reordered");
       await loadThreads();
       setStatus("Moved notebook");
     } catch {
@@ -447,6 +522,7 @@ function App() {
 
     try {
       const updated = await renameFolder(folderId, title);
+      void notifyNotebookDataChanged("folder-renamed");
       await loadFolders();
       setStatus(`Renamed folder to ${updated.title}`);
     } catch {
@@ -466,6 +542,7 @@ function App() {
 
     try {
       await deleteFolder(folder.id);
+      void notifyNotebookDataChanged("folder-deleted");
       await Promise.all([loadFolders(), loadThreads()]);
       setStatus("Deleted folder");
     } catch {
@@ -527,6 +604,7 @@ function App() {
     try {
       const backupData = await parseNotebookImportFile(file);
       const result = await mergeNotebookDataFromBackup(backupData);
+      void notifyNotebookDataChanged("backup-imported");
       resetCollapsedMessages();
       setMessageUndoHistory({});
       setNotebookUndoHistory({});
@@ -581,6 +659,7 @@ function App() {
 
     try {
       const updated = await renameThreadTitle(threadId, title);
+      void notifyNotebookDataChanged("notebook-renamed");
       pushNotebookUndoSnapshot(undoSnapshot);
       await loadThreads();
       setStatus(`Renamed to ${updated.title}`);
@@ -657,6 +736,7 @@ function App() {
 
     try {
       await restoreNotebookSnapshot(snapshot);
+      void notifyNotebookDataChanged("notebook-undo");
       popNotebookUndoSnapshot(selectedThreadId);
       setMessageUndoHistory({});
       setLastDeletedMessage(null);
@@ -694,6 +774,7 @@ function App() {
         contentMarkdown,
         contentText,
       });
+      void notifyNotebookDataChanged("note-created");
 
       pushNotebookUndoSnapshot(undoSnapshot);
       setMessageQuery("");
@@ -747,6 +828,7 @@ function App() {
     try {
       const result = await applyAiOperationPackage(proposal.package);
       await deleteAiOperationProposal(proposal.id);
+      void notifyNotebookDataChanged("ai-proposal-applied");
       pushNotebookUndoSnapshot(result.appliedCount > 0 ? undoSnapshot : null);
 
       const nextThreads = await loadThreads();
@@ -776,6 +858,7 @@ function App() {
 
     try {
       await deleteAiOperationProposal(proposal.id);
+      void notifyNotebookDataChanged("ai-proposal-dismissed");
       await loadAiOperationProposals();
       setStatus("Dismissed ChatGPT note changes");
     } catch {
@@ -834,6 +917,7 @@ function App() {
         selectedThreadId,
         selectedMergeMessages.map((message) => message.id),
       );
+      void notifyNotebookDataChanged("notes-merged");
 
       if (!mergedMessage) {
         setError("Select at least two notes to merge.");
@@ -858,6 +942,7 @@ function App() {
 
     try {
       setMessages(await moveMessageAfterMessage(message.threadId, message.id, afterMessageId));
+      void notifyNotebookDataChanged("note-reordered");
       pushNotebookUndoSnapshot(undoSnapshot);
       setStatus("Moved note");
       await loadThreads();
@@ -920,6 +1005,7 @@ function App() {
 
     try {
       await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      void notifyNotebookDataChanged("note-updated");
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
       selection.removeAllRanges();
@@ -956,6 +1042,7 @@ function App() {
 
     try {
       await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      void notifyNotebookDataChanged("note-updated");
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
       window.getSelection()?.removeAllRanges();
@@ -983,6 +1070,7 @@ function App() {
 
     try {
       await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      void notifyNotebookDataChanged("note-updated");
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
       setStatus("Removed collapsible header");
@@ -1014,6 +1102,7 @@ function App() {
 
     try {
       await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      void notifyNotebookDataChanged("note-updated");
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
       window.getSelection()?.removeAllRanges();
@@ -1036,6 +1125,7 @@ function App() {
 
     try {
       await updateMessageContent(message.threadId, message.id, nextMarkdown, title);
+      void notifyNotebookDataChanged("note-edited");
       if (previousMarkdown !== nextMarkdown) {
         pushMessageUndoSnapshot(message.id, previousMarkdown);
       }
@@ -1062,6 +1152,7 @@ function App() {
         file,
         filename: file.name,
       });
+      void notifyNotebookDataChanged("image-added");
 
       setStatus("Image added to note draft");
       return createAssetMarkdown(asset.id, asset.altText);
@@ -1091,6 +1182,7 @@ function App() {
 
     const undoSnapshot = createNotebookUndoSnapshot(message.threadId);
     const updatedMessage = await deleteSelectedTextFromMessage(message.threadId, message.id, selectedText);
+    void notifyNotebookDataChanged("note-text-deleted");
 
     if (!updatedMessage) {
       setError("That highlight could not be matched in the stored note.");
@@ -1112,6 +1204,7 @@ function App() {
 
     try {
       await deleteMessage(message.threadId, message.id);
+      void notifyNotebookDataChanged("note-deleted");
       setLastDeletedMessage(message);
       removeMessageUndoHistory(message.id);
       pushNotebookUndoSnapshot(undoSnapshot);
@@ -1157,6 +1250,7 @@ function App() {
 
     try {
       await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      void notifyNotebookDataChanged("note-section-deleted");
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
       setStatus("Deleted section");
@@ -1182,6 +1276,7 @@ function App() {
 
     try {
       await updateMessageContent(message.threadId, message.id, previousMarkdown);
+      void notifyNotebookDataChanged("note-undo");
       popMessageUndoSnapshot(message.id);
       pushNotebookUndoSnapshot(undoSnapshot);
       setStatus("Undid last note edit");
@@ -1205,6 +1300,7 @@ function App() {
 
     try {
       const restoredMessage = await restoreDeletedMessage(lastDeletedMessage);
+      void notifyNotebookDataChanged("note-restored");
       setLastDeletedMessage(null);
       pushNotebookUndoSnapshot(undoSnapshot);
       setCollapsedMessageIds((current) => new Set(current).add(restoredMessage.id));
@@ -1326,6 +1422,9 @@ function App() {
       {error ? <span className="error-text">{error}</span> : null}
     </div>
   ) : null;
+  const autosaveFeedback = autosaveStatus ? (
+    <AutosaveStatusIndicator status={autosaveStatus} onForceAutosave={() => void forceAutosave()} />
+  ) : null;
   const noteCollapseToggleLabel = areAllVisibleMessagesCollapsed ? "Expand notes" : "Collapse notes";
 
   return (
@@ -1339,6 +1438,7 @@ function App() {
             </button>
             <h1 className="notebook-detail-title">{selectedThread?.title ?? "Notebook"}</h1>
             <div className="notebook-detail-actions">
+              {autosaveFeedback}
               <button
                 className="icon-button notebook-detail-notes-toggle"
                 type="button"
@@ -1450,6 +1550,7 @@ function App() {
             newNotebookTitle={newNotebookTitle}
             newFolderTitle={newFolderTitle}
             themeToggle={themeToggle}
+            autosaveControl={autosaveFeedback}
             selectedThreadId={selectedThreadId}
             isFullPage
             onFilterChange={setThreadFilter}
@@ -1479,6 +1580,102 @@ function App() {
       )}
     </main>
   );
+}
+
+function getAutosaveStatusText(status: AutosaveStatusResponse): string {
+  if (status.state === "saving") {
+    return "Backing up...";
+  }
+
+  if (status.state === "pending") {
+    return "Backup pending";
+  }
+
+  if (status.state === "error") {
+    return status.lastBackupError ? `Backup failed: ${status.lastBackupError}` : "Backup failed";
+  }
+
+  if (status.lastBackupAt) {
+    return `Backed up ${formatBackupTime(status.lastBackupAt)}`;
+  }
+
+  return "Saved locally";
+}
+
+function getAutosaveTooltipText(status: AutosaveStatusResponse): string {
+  if (status.state === "pending") {
+    return "Changes are saved locally. Automatic backup will persist them after a short quiet period.";
+  }
+
+  if (status.state === "saving") {
+    return "Changes are saved locally. Writing automatic backup now.";
+  }
+
+  if (status.state === "error") {
+    return status.lastBackupError
+      ? `Changes are saved locally, but automatic backup failed: ${status.lastBackupError}`
+      : "Changes are saved locally, but automatic backup failed.";
+  }
+
+  if (status.lastBackupAt) {
+    return `Changes are saved locally and backed up at ${formatBackupTime(status.lastBackupAt)}.`;
+  }
+
+  return "Changes are saved locally. Automatic backup will persist future changes.";
+}
+
+function getAutosaveIcon(status: AutosaveStatusResponse) {
+  if (status.state === "pending") {
+    return <Circle size={14} aria-hidden="true" />;
+  }
+
+  if (status.state === "saving") {
+    return <Clock size={14} aria-hidden="true" />;
+  }
+
+  if (status.state === "error") {
+    return <TriangleAlert size={14} aria-hidden="true" />;
+  }
+
+  return <Check size={15} aria-hidden="true" />;
+}
+
+function AutosaveStatusIndicator({
+  status,
+  onForceAutosave,
+}: {
+  status: AutosaveStatusResponse;
+  onForceAutosave(): void;
+}) {
+  const label = getAutosaveStatusText(status);
+  const tooltip = getAutosaveTooltipText(status);
+  const actionLabel = `${tooltip} Click to back up now.`;
+
+  return (
+    <button
+      className={`autosave-status is-${status.state}`}
+      type="button"
+      aria-label={actionLabel}
+      title="Back up now"
+      onClick={onForceAutosave}
+    >
+      {getAutosaveIcon(status)}
+      <span className="autosave-tooltip" role="tooltip">
+        <span className="autosave-tooltip-title">{label}</span>
+        <span className="autosave-tooltip-body">{tooltip} Click to back up now.</span>
+      </span>
+    </button>
+  );
+}
+
+function formatBackupTime(value: string): string {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "recently";
+  }
+
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 type AiOperationProposalReviewProps = {

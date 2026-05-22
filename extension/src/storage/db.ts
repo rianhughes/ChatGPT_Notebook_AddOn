@@ -20,35 +20,9 @@ export class NotesDatabase extends Dexie {
   constructor() {
     super("chatgpt-notes-sidebar");
 
-    this.version(1).stores({
-      threads: "&id, &[source+sourceThreadId], updatedAt",
-      messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
-    });
-
-    this.version(2).stores({
-      threads: "&id, &[source+sourceThreadId], updatedAt",
-      messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
-      settings: "&key, updatedAt",
-    });
-
-    this.version(3).stores({
+    this.version(6).stores({
       threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
-      messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
-      settings: "&key, updatedAt",
-      folders: "&id, sortOrder, updatedAt",
-    });
-
-    this.version(4).stores({
-      threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
-      messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
-      settings: "&key, updatedAt",
-      folders: "&id, sortOrder, updatedAt",
-      aiOperationProposals: "&id, sourceThreadId, createdAt, updatedAt",
-    });
-
-    this.version(5).stores({
-      threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
-      messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
+      messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, [threadId+sortOrder], sortOrder, updatedAt",
       settings: "&key, updatedAt",
       folders: "&id, sortOrder, updatedAt",
       aiOperationProposals: "&id, sourceThreadId, createdAt, updatedAt",

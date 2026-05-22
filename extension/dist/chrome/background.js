@@ -1167,6 +1167,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         return typeof value.payload.sourceThreadId === "string" && typeof value.payload.sourceMessageKey === "string" && typeof value.payload.saved === "boolean";
       case "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES":
         return isOptionalCapturableSource(value.payload.source) && typeof value.payload.sourceThreadId === "string" && Array.isArray(value.payload.sourceMessageKeys) && value.payload.sourceMessageKeys.every((key) => typeof key === "string");
+      case "NOTEBOOK_DATA_CHANGED":
+        return typeof value.payload.reason === "string";
+      case "GET_AUTOSAVE_STATUS":
+        return true;
+      case "FORCE_AUTOSAVE":
+        return true;
       default:
         return false;
     }
@@ -4240,31 +4246,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       __publicField(this, "folders");
       __publicField(this, "aiOperationProposals");
       __publicField(this, "assets");
-      this.version(1).stores({
-        threads: "&id, &[source+sourceThreadId], updatedAt",
-        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt"
-      });
-      this.version(2).stores({
-        threads: "&id, &[source+sourceThreadId], updatedAt",
-        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
-        settings: "&key, updatedAt"
-      });
-      this.version(3).stores({
+      this.version(6).stores({
         threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
-        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
-        settings: "&key, updatedAt",
-        folders: "&id, sortOrder, updatedAt"
-      });
-      this.version(4).stores({
-        threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
-        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
-        settings: "&key, updatedAt",
-        folders: "&id, sortOrder, updatedAt",
-        aiOperationProposals: "&id, sourceThreadId, createdAt, updatedAt"
-      });
-      this.version(5).stores({
-        threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
-        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
+        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, [threadId+sortOrder], sortOrder, updatedAt",
         settings: "&key, updatedAt",
         folders: "&id, sortOrder, updatedAt",
         aiOperationProposals: "&id, sourceThreadId, createdAt, updatedAt",
@@ -4293,6 +4277,127 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   function getSectionBoundaryLinePattern(flags = "") {
     return new RegExp(`^\\s*<!--\\s*${escapeRegExp(SECTION_BOUNDARY_MARKER)}(?::[1-6])?\\s*-->\\s*$`, flags);
+  }
+  function getMessagesInOrder(_thread, messages) {
+    if (messages.length === 0) {
+      return [];
+    }
+    return [...messages].sort(compareMessagesBySortOrder);
+  }
+  function renumberMessages(messages) {
+    return messages.map((message, index) => ({
+      ...message,
+      sortOrder: index
+    }));
+  }
+  function insertMessageAfter(orderedMessages, message, afterMessageId) {
+    const withoutMessage = orderedMessages.filter((item) => item.id !== message.id);
+    const insertIndex = getInsertIndexAfter(withoutMessage, afterMessageId);
+    return renumberMessages([
+      ...withoutMessage.slice(0, insertIndex),
+      message,
+      ...withoutMessage.slice(insertIndex)
+    ]);
+  }
+  function getInsertIndexAfter(orderedMessages, afterMessageId) {
+    if (afterMessageId === null) {
+      return 0;
+    }
+    const afterIndex = orderedMessages.findIndex((message) => message.id === afterMessageId);
+    if (afterIndex === -1) {
+      throw new Error(`Missing target message ${afterMessageId}`);
+    }
+    return afterIndex + 1;
+  }
+  function compareMessagesBySortOrder(left, right) {
+    if (left.sortOrder !== right.sortOrder) {
+      return left.sortOrder - right.sortOrder;
+    }
+    return compareMessagesByCreatedAt(left, right);
+  }
+  function compareMessagesByCreatedAt(left, right) {
+    if (left.createdAt !== right.createdAt) {
+      return left.createdAt - right.createdAt;
+    }
+    return left.id.localeCompare(right.id);
+  }
+  async function getNotebookBackupSnapshot() {
+    const [folders, threads, messages, settings, aiOperationProposals, assets] = await Promise.all([
+      notesDb.folders.toArray(),
+      notesDb.threads.toArray(),
+      notesDb.messages.toArray(),
+      notesDb.settings.toArray(),
+      notesDb.aiOperationProposals.toArray(),
+      notesDb.assets.toArray()
+    ]);
+    return {
+      folders: sortFolders(folders),
+      threads: sortThreads(threads),
+      messages,
+      settings,
+      aiOperationProposals: aiOperationProposals.sort((left, right) => left.createdAt - right.createdAt),
+      assets
+    };
+  }
+  async function recordNotebookDataMutation() {
+    return notesDb.transaction("rw", notesDb.settings, async () => {
+      const currentRevision = await getNumericSettingInTransaction("dataRevision");
+      const nextRevision = currentRevision + 1;
+      await notesDb.settings.put({
+        key: "dataRevision",
+        value: String(nextRevision),
+        updatedAt: Date.now()
+      });
+      await notesDb.settings.delete("lastBackupError");
+      return nextRevision;
+    });
+  }
+  async function getNotebookAutosaveMetadata() {
+    var _a2, _b, _c, _d, _e;
+    const settings = await notesDb.settings.bulkGet([
+      "dataRevision",
+      "lastBackupRevision",
+      "lastBackupAt",
+      "lastBackupError",
+      "lastDailyBackupDate"
+    ]);
+    return {
+      dataRevision: toSettingNumber((_a2 = settings[0]) == null ? void 0 : _a2.value),
+      lastBackupRevision: toSettingNumber((_b = settings[1]) == null ? void 0 : _b.value),
+      lastBackupAt: ((_c = settings[2]) == null ? void 0 : _c.value) ?? null,
+      lastBackupError: ((_d = settings[3]) == null ? void 0 : _d.value) ?? null,
+      lastDailyBackupDate: ((_e = settings[4]) == null ? void 0 : _e.value) ?? null
+    };
+  }
+  async function markNotebookBackupSucceeded(input) {
+    const timestamp = Date.now();
+    await notesDb.transaction("rw", notesDb.settings, async () => {
+      await notesDb.settings.bulkPut([
+        {
+          key: "lastBackupRevision",
+          value: String(input.revision),
+          updatedAt: timestamp
+        },
+        {
+          key: "lastBackupAt",
+          value: input.backedUpAt,
+          updatedAt: timestamp
+        },
+        {
+          key: "lastDailyBackupDate",
+          value: input.dailyBackupDate,
+          updatedAt: timestamp
+        }
+      ]);
+      await notesDb.settings.delete("lastBackupError");
+    });
+  }
+  async function markNotebookBackupFailed(error) {
+    await notesDb.settings.put({
+      key: "lastBackupError",
+      value: error,
+      updatedAt: Date.now()
+    });
   }
   async function saveAiOperationProposal(operationPackage) {
     const timestamp = Date.now();
@@ -4443,8 +4548,6 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       sourceThreadId: input.sourceThreadId,
       title: input.title || getDefaultSourceThreadTitle(source),
       folderId: null,
-      headMessageId: null,
-      tailMessageId: null,
       messageCount: 0,
       sortOrder: await getNextThreadSortOrderInTransaction(),
       createdAt: timestamp,
@@ -4463,26 +4566,53 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     return Math.min(...threads.map(getThreadSortOrder)) - 1;
   }
+  function sortThreads(threads) {
+    return [...threads].sort((left, right) => {
+      const leftSortOrder = getThreadSortOrder(left);
+      const rightSortOrder = getThreadSortOrder(right);
+      if (leftSortOrder !== rightSortOrder) {
+        return leftSortOrder - rightSortOrder;
+      }
+      return right.updatedAt - left.updatedAt;
+    });
+  }
+  function sortFolders(folders) {
+    return [...folders].sort((left, right) => {
+      const leftSortOrder = getFolderSortOrder(left);
+      const rightSortOrder = getFolderSortOrder(right);
+      if (leftSortOrder !== rightSortOrder) {
+        return leftSortOrder - rightSortOrder;
+      }
+      return right.updatedAt - left.updatedAt;
+    });
+  }
   function getThreadSortOrder(thread) {
     return typeof thread.sortOrder === "number" ? thread.sortOrder : -thread.updatedAt;
   }
+  function getFolderSortOrder(folder) {
+    return typeof folder.sortOrder === "number" ? folder.sortOrder : -folder.updatedAt;
+  }
+  async function getNumericSettingInTransaction(key) {
+    const setting = await notesDb.settings.get(key);
+    return toSettingNumber(setting == null ? void 0 : setting.value);
+  }
+  function toSettingNumber(value) {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
   async function appendMessageInTransaction(thread, message, timestamp) {
+    const messages = getMessagesInOrder(thread, await notesDb.messages.where("threadId").equals(thread.id).toArray());
+    const updatedMessages = renumberMessages([...messages, message]);
     const updatedThread = {
       ...thread,
-      headMessageId: thread.headMessageId ?? message.id,
-      tailMessageId: message.id,
-      messageCount: thread.messageCount + 1,
+      messageCount: updatedMessages.length,
       updatedAt: timestamp
     };
-    if (thread.tailMessageId) {
-      const tail = await notesDb.messages.get(thread.tailMessageId);
-      if (!tail || tail.threadId !== thread.id) {
-        throw new Error("Cannot append message because thread tail is corrupt");
-      }
-      await notesDb.messages.put({ ...tail, nextId: message.id, updatedAt: timestamp });
-      message.prevId = tail.id;
+    const storedMessage = updatedMessages.find((item) => item.id === message.id);
+    if (storedMessage) {
+      Object.assign(message, storedMessage);
     }
-    await notesDb.messages.add(message);
+    await notesDb.messages.bulkPut(updatedMessages);
     await notesDb.threads.put(updatedThread);
     return updatedThread;
   }
@@ -4491,20 +4621,18 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     if (!after || after.threadId !== thread.id) {
       return null;
     }
-    const next = after.nextId ? await notesDb.messages.get(after.nextId) : null;
+    const messages = getMessagesInOrder(thread, await notesDb.messages.where("threadId").equals(thread.id).toArray());
+    const updatedMessages = insertMessageAfter(messages, message, afterMessageId);
     const updatedThread = {
       ...thread,
-      tailMessageId: next ? thread.tailMessageId : message.id,
-      messageCount: thread.messageCount + 1,
+      messageCount: updatedMessages.length,
       updatedAt: timestamp
     };
-    message.prevId = after.id;
-    message.nextId = (next == null ? void 0 : next.id) ?? null;
-    await notesDb.messages.put({ ...after, nextId: message.id, updatedAt: timestamp });
-    if (next) {
-      await notesDb.messages.put({ ...next, prevId: message.id, updatedAt: timestamp });
+    const storedMessage = updatedMessages.find((item) => item.id === message.id);
+    if (storedMessage) {
+      Object.assign(message, storedMessage);
     }
-    await notesDb.messages.add(message);
+    await notesDb.messages.bulkPut(updatedMessages);
     await notesDb.threads.put(updatedThread);
     return updatedThread;
   }
@@ -4519,8 +4647,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       title: normalizeMessageTitle(input.title) || getDefaultMessageTitle(input.contentMarkdown || input.contentText),
       contentMarkdown: input.contentMarkdown,
       contentText: input.contentText,
-      prevId: null,
-      nextId: null,
+      sortOrder: 0,
       createdAt: input.createdAt ?? timestamp,
       updatedAt: input.updatedAt ?? timestamp
     };
@@ -4566,6 +4693,236 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     {
       return createChromeSidebarAdapter();
     }
+  }
+  const BACKUP_APP_ID = "chatgpt-notes-sidebar";
+  const BACKUP_VERSION = 1;
+  async function createNotebookBackupData(snapshot, options = {}) {
+    const assets = await Promise.all(
+      snapshot.assets.map(async (asset) => ({
+        id: asset.id,
+        threadId: asset.threadId,
+        messageId: asset.messageId,
+        kind: asset.kind,
+        mimeType: asset.mimeType,
+        filename: asset.filename,
+        altText: asset.altText,
+        byteSize: asset.byteSize,
+        width: asset.width,
+        height: asset.height,
+        contentHash: asset.contentHash,
+        contentBase64: await blobToBase64(asset.blob),
+        createdAt: asset.createdAt,
+        updatedAt: asset.updatedAt
+      }))
+    );
+    return {
+      app: BACKUP_APP_ID,
+      backupVersion: BACKUP_VERSION,
+      exportedAt: toIsoString(options.now ?? Date.now()),
+      dataRevision: options.dataRevision ?? getSnapshotDataRevision(snapshot),
+      counts: {
+        folders: snapshot.folders.length,
+        threads: snapshot.threads.length,
+        messages: snapshot.messages.length,
+        settings: snapshot.settings.length,
+        aiOperationProposals: snapshot.aiOperationProposals.length,
+        assets: snapshot.assets.length
+      },
+      folders: snapshot.folders,
+      threads: snapshot.threads,
+      messages: snapshot.messages,
+      settings: snapshot.settings,
+      aiOperationProposals: snapshot.aiOperationProposals,
+      assets
+    };
+  }
+  async function blobToBase64(blob) {
+    const bytes = new Uint8Array(await blobToArrayBuffer(blob));
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 32768) {
+      binary += String.fromCharCode(...bytes.slice(index, index + 32768));
+    }
+    return btoa(binary);
+  }
+  function blobToArrayBuffer(blob) {
+    if (typeof blob.arrayBuffer === "function") {
+      return blob.arrayBuffer();
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error("Could not read backup asset."));
+      reader.onload = () => {
+        if (reader.result instanceof ArrayBuffer) {
+          resolve(reader.result);
+          return;
+        }
+        reject(new Error("Could not read backup asset."));
+      };
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+  function toIsoString(value) {
+    return new Date(value).toISOString();
+  }
+  function getSnapshotDataRevision(snapshot) {
+    var _a2;
+    const revision = Number(((_a2 = snapshot.settings.find((setting) => setting.key === "dataRevision")) == null ? void 0 : _a2.value) ?? 0);
+    return Number.isFinite(revision) ? revision : 0;
+  }
+  const AUTOSAVE_DELAY_MS = 1e4;
+  const BACKUP_DIR = "ChatGPT Notes Backups";
+  const BACKUP_RETENTION_DAYS = 7;
+  let autosaveTimer = null;
+  let writeInProgress = false;
+  let dirtyWhileWriting = false;
+  let transientState = null;
+  async function noteNotebookDataChanged() {
+    await recordNotebookDataMutation();
+    transientState = "pending";
+    scheduleAutosave();
+  }
+  async function forceNotebookAutosave() {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+    await flushAutosave();
+    return getAutosaveStatus();
+  }
+  async function getAutosaveStatus() {
+    const metadata = await getNotebookAutosaveMetadata();
+    const state = getAutosaveState(metadata);
+    return {
+      state,
+      dataRevision: metadata.dataRevision,
+      lastBackupRevision: metadata.lastBackupRevision,
+      lastBackupAt: metadata.lastBackupAt,
+      lastBackupError: metadata.lastBackupError
+    };
+  }
+  function scheduleAutosave(delayMs = AUTOSAVE_DELAY_MS) {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+    }
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      void flushAutosave();
+    }, delayMs);
+  }
+  async function flushAutosave() {
+    if (writeInProgress) {
+      dirtyWhileWriting = true;
+      return;
+    }
+    writeInProgress = true;
+    transientState = "saving";
+    try {
+      const metadata = await getNotebookAutosaveMetadata();
+      if (metadata.dataRevision <= metadata.lastBackupRevision) {
+        transientState = null;
+        return;
+      }
+      const snapshot = await getNotebookBackupSnapshot();
+      const backupData = await createNotebookBackupData(snapshot, { dataRevision: metadata.dataRevision });
+      const contents = `${JSON.stringify(backupData, null, 2)}
+`;
+      const backupDate = backupData.exportedAt.slice(0, 10);
+      await downloadTextFile({
+        contents,
+        filename: `${BACKUP_DIR}/chatgpt-notes-autobackup-latest.json`,
+        overwrite: true
+      });
+      await downloadTextFile({
+        contents,
+        filename: `${BACKUP_DIR}/chatgpt-notes-autobackup-${backupDate}.json`,
+        overwrite: true
+      });
+      await cleanupOldDailyBackups(backupDate);
+      await markNotebookBackupSucceeded({
+        revision: metadata.dataRevision,
+        backedUpAt: backupData.exportedAt,
+        dailyBackupDate: backupDate
+      });
+      transientState = null;
+    } catch (error) {
+      transientState = "error";
+      await markNotebookBackupFailed(error instanceof Error ? error.message : "Autosave backup failed.");
+    } finally {
+      writeInProgress = false;
+      const metadata = await getNotebookAutosaveMetadata();
+      if (dirtyWhileWriting || metadata.dataRevision > metadata.lastBackupRevision) {
+        dirtyWhileWriting = false;
+        transientState = "pending";
+        scheduleAutosave();
+      }
+    }
+  }
+  function getAutosaveState(metadata) {
+    if (transientState === "saving") {
+      return "saving";
+    }
+    if (metadata.lastBackupError && metadata.dataRevision > metadata.lastBackupRevision) {
+      return "error";
+    }
+    if (transientState === "pending" || metadata.dataRevision > metadata.lastBackupRevision) {
+      return "pending";
+    }
+    return "idle";
+  }
+  async function downloadTextFile(input) {
+    const url = createDownloadUrl(input.contents);
+    try {
+      await browser.downloads.download({
+        url,
+        filename: input.filename,
+        saveAs: false,
+        conflictAction: input.overwrite ? "overwrite" : "uniquify"
+      });
+    } finally {
+      if (url.startsWith("blob:")) {
+        URL.revokeObjectURL(url);
+      }
+    }
+  }
+  function createDownloadUrl(contents) {
+    if (typeof URL.createObjectURL === "function") {
+      return URL.createObjectURL(new Blob([contents], { type: "application/json;charset=utf-8" }));
+    }
+    return `data:application/json;charset=utf-8,${encodeURIComponent(contents)}`;
+  }
+  async function cleanupOldDailyBackups(currentDate) {
+    const cutoff = /* @__PURE__ */ new Date(`${currentDate}T00:00:00.000Z`);
+    cutoff.setUTCDate(cutoff.getUTCDate() - BACKUP_RETENTION_DAYS + 1);
+    try {
+      const downloads = await browser.downloads.search({ query: ["chatgpt-notes-autobackup-"] });
+      await Promise.all(
+        downloads.map(async (download) => {
+          if (!download.id || !download.filename) {
+            return;
+          }
+          const date = getDailyBackupDateFromFilename(download.filename);
+          if (!date || date >= cutoff) {
+            return;
+          }
+          try {
+            await browser.downloads.removeFile(download.id);
+          } catch {
+          }
+          try {
+            await browser.downloads.erase({ id: download.id });
+          } catch {
+          }
+        })
+      );
+    } catch {
+    }
+  }
+  function getDailyBackupDateFromFilename(filename) {
+    const match = /chatgpt-notes-autobackup-(\d{4}-\d{2}-\d{2})\.json$/.exec(filename);
+    if (!match) {
+      return null;
+    }
+    return /* @__PURE__ */ new Date(`${match[1]}T00:00:00.000Z`);
   }
   const SIDEBAR_PAGE = "sidebar.html";
   const SIDEBAR_WINDOW_WIDTH = 460;
@@ -4637,6 +4994,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     switch (message.type) {
       case "SAVE_CHATGPT_MESSAGE": {
         const result = await appendSavedMessageFromChatGpt(message.payload);
+        await noteNotebookDataChanged();
         const response = {
           sourceThreadId: message.payload.sourceThreadId,
           sourceMessageKey: result.message.sourceMessageKey,
@@ -4666,6 +5024,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         return getActiveSaveTargetThread();
       case "SET_ACTIVE_SAVE_TARGET": {
         const thread = await setActiveSaveTargetThread(message.payload.threadId);
+        await noteNotebookDataChanged();
         await broadcastToChatGptTabs({
           type: "ACTIVE_SAVE_TARGET_CHANGED",
           payload: {
@@ -4686,6 +5045,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       case "SUBMIT_AI_OPERATION_PACKAGE": {
         try {
           const proposal = await saveAiOperationProposal(message.payload);
+          await noteNotebookDataChanged();
           try {
             await openDetachedSidebarWindow();
           } catch {
@@ -4713,6 +5073,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           };
         }
       }
+      case "NOTEBOOK_DATA_CHANGED":
+        await noteNotebookDataChanged();
+        return getAutosaveStatus();
+      case "GET_AUTOSAVE_STATUS":
+        return getAutosaveStatus();
+      case "FORCE_AUTOSAVE":
+        return forceNotebookAutosave();
       case "CHATGPT_THREAD_CHANGED":
       case "SAVE_CHATGPT_MESSAGE_RESULT":
       case "ACTIVE_SAVE_TARGET_CHANGED":
