@@ -53,6 +53,12 @@ Only rebuild when changing extension source code. To refresh the Chrome build, r
 
 If the ChatGPT page does not show **Export to ChatGPT Note** buttons, click the ChatGPT Notes toolbar icon while the ChatGPT tab is active. If the buttons still do not appear, reload the ChatGPT tab once.
 
+## Backup and Restore
+
+Browser extension storage is removed when the extension is uninstalled. Use the notebook list toolbar to export a full backup before removing or reinstalling the add-on.
+
+The full backup downloads a `chatgpt-notes-backup-YYYY-MM-DD.json` file. It includes folders, notebooks, notes, settings, pending ChatGPT note operations, and image assets. Keep this file outside the browser profile, then use the import button on the notebook list toolbar to restore it. Importing a full backup or a single-notebook JSON export merges it into the current extension database; matching notebooks and notes are updated, and unrelated current data is kept.
+
 ## Browser Support
 
 Firefox is the primary supported browser. Chrome support is available through the unpacked development build and requires Chrome 116 or newer.

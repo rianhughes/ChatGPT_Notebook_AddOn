@@ -99,7 +99,8 @@ function formatPrintableMarkdown(markdown: string, assets: NotebookExportAsset[]
     inCodeBlock = false;
   };
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
     const fence = line.match(/^```([^\s`]*)\s*$/);
 
     if (inCodeBlock) {
@@ -121,6 +122,14 @@ function formatPrintableMarkdown(markdown: string, assets: NotebookExportAsset[]
 
     if (!line.trim()) {
       flushFlow();
+      continue;
+    }
+
+    const table = readPrintableMarkdownTable(lines, lineIndex);
+    if (table) {
+      flushFlow();
+      html.push(formatPrintableTable(table.header, table.rows, assets));
+      lineIndex += table.consumedLineCount - 1;
       continue;
     }
 
@@ -171,6 +180,105 @@ function formatPrintableMarkdown(markdown: string, assets: NotebookExportAsset[]
   return html.join("\n") || '<p class="notebook-print-empty">Empty note.</p>';
 }
 
+type PrintableMarkdownTable = {
+  header: string[];
+  rows: string[][];
+  consumedLineCount: number;
+};
+
+function readPrintableMarkdownTable(lines: string[], startIndex: number): PrintableMarkdownTable | null {
+  const headerLine = lines[startIndex];
+  const separatorLine = lines[startIndex + 1];
+
+  if (!headerLine || !separatorLine || !isMarkdownTableSeparator(separatorLine)) {
+    return null;
+  }
+
+  const header = splitMarkdownTableCells(headerLine);
+  const separator = splitMarkdownTableCells(separatorLine);
+
+  if (header.length < 2 || separator.length < header.length) {
+    return null;
+  }
+
+  const rows: string[][] = [];
+  let nextLineIndex = startIndex + 2;
+
+  while (nextLineIndex < lines.length && isMarkdownTableRow(lines[nextLineIndex])) {
+    rows.push(padMarkdownTableRow(splitMarkdownTableCells(lines[nextLineIndex]), header.length));
+    nextLineIndex += 1;
+  }
+
+  return {
+    header: padMarkdownTableRow(header, header.length),
+    rows,
+    consumedLineCount: nextLineIndex - startIndex,
+  };
+}
+
+function formatPrintableTable(header: string[], rows: string[][], assets: NotebookExportAsset[]): string {
+  return [
+    '<div class="notebook-print-table-wrap">',
+    "<table>",
+    `<thead><tr>${header.map((cell) => `<th>${renderInlineMarkdown(cell, assets)}</th>`).join("")}</tr></thead>`,
+    `<tbody>${rows
+      .map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell, assets)}</td>`).join("")}</tr>`)
+      .join("")}</tbody>`,
+    "</table>",
+    "</div>",
+  ].join("");
+}
+
+function isMarkdownTableRow(line: string): boolean {
+  return splitMarkdownTableCells(line).length > 1;
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const cells = splitMarkdownTableCells(line);
+  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitMarkdownTableCells(line: string): string[] {
+  const trimmed = line.trim();
+
+  if (!trimmed.includes("|")) {
+    return [];
+  }
+
+  const content = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let cell = "";
+  let isEscaped = false;
+
+  for (const character of content) {
+    if (isEscaped) {
+      cell += character;
+      isEscaped = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      isEscaped = true;
+      continue;
+    }
+
+    if (character === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+
+    cell += character;
+  }
+
+  cells.push(cell.trim());
+  return cells;
+}
+
+function padMarkdownTableRow(row: string[], columnCount: number): string[] {
+  return [...row, ...Array.from({ length: Math.max(0, columnCount - row.length) }, () => "")].slice(0, columnCount);
+}
+
 function renderInlineMarkdown(value: string, assets: NotebookExportAsset[]): string {
   const assetUrls = new Map(
     assets.map((asset) => [
@@ -203,15 +311,38 @@ function renderInlineMarkdown(value: string, assets: NotebookExportAsset[]): str
   const withCode = codeSegments.reduce(
     (rendered, code, index) => rendered.replaceAll(`@@NOTEPRINTCODE${index}@@`, code),
     html
+      .replace(/\[([^\]\n]+)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)/g, (_match, label: string, href: string) =>
+        renderPrintableLink(label, href),
+      )
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/_([^_\n]+)_/g, "<em>$1</em>")
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>'),
   );
 
   return imageSegments.reduce(
     (rendered, image, index) => rendered.replaceAll(`@@NOTEPRINTIMAGE${index}@@`, image),
     withCode,
   );
+}
+
+function renderPrintableLink(label: string, href: string): string {
+  if (!isSafePrintableLinkHref(href)) {
+    return label;
+  }
+
+  if (/^(https?:\/\/|mailto:)/i.test(href)) {
+    return `<a href="${href}">${label}</a>`;
+  }
+
+  return [
+    '<span class="notebook-print-source-link">',
+    `<span class="notebook-print-source-link-label">${label}</span>`,
+    `<span class="notebook-print-source-link-path">${href}</span>`,
+    "</span>",
+  ].join("");
+}
+
+function isSafePrintableLinkHref(href: string): boolean {
+  return /^(https?:\/\/|mailto:|\/|\.\/|\.\.\/)/i.test(href);
 }
 
 function escapeHtml(value: string): string {
@@ -335,7 +466,8 @@ h1 {
 .notebook-print-content ul,
 .notebook-print-content ol,
 .notebook-print-content blockquote,
-.notebook-print-content pre {
+.notebook-print-content pre,
+.notebook-print-table-wrap {
   margin: 0 0 0.9em;
 }
 
@@ -373,6 +505,40 @@ h1 {
   padding: 0;
 }
 
+.notebook-print-table-wrap {
+  max-width: 100%;
+  overflow: visible;
+}
+
+.notebook-print-content table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.notebook-print-content th,
+.notebook-print-content td {
+  border: 1px solid #d7dee8;
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.notebook-print-content th {
+  background: #f4f0e8;
+  color: #111827;
+  font-weight: 700;
+}
+
+.notebook-print-content td code,
+.notebook-print-content th code {
+  white-space: normal;
+}
+
 .notebook-print-content img {
   display: block;
   max-width: 100%;
@@ -384,6 +550,28 @@ h1 {
 .notebook-print-content a {
   color: #175cd3;
   text-decoration: underline;
+}
+
+.notebook-print-source-link {
+  display: inline-flex;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 2px;
+  vertical-align: top;
+}
+
+.notebook-print-source-link-label {
+  color: #175cd3;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.notebook-print-source-link-path {
+  color: #667085;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.78em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .notebook-print-empty {

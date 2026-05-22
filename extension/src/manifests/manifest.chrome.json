@@ -10,7 +10,7 @@
     "128": "icon.png"
   },
   "permissions": ["sidePanel", "scripting", "storage", "tabs", "clipboardWrite"],
-  "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+  "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://deepwiki.com/*"],
   "background": {
     "service_worker": "background.js"
   },
@@ -19,7 +19,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://deepwiki.com/*"],
       "js": ["content.js"],
       "css": ["injected.css"]
     }
@@ -31,7 +31,7 @@
   "web_accessible_resources": [
     {
       "resources": ["icon.png"],
-      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"]
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://deepwiki.com/*"]
     }
   ]
 }

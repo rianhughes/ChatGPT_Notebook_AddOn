@@ -989,6 +989,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   var browserPolyfillExports = browserPolyfill.exports;
   const browser = /* @__PURE__ */ getDefaultExportFromCjs(browserPolyfillExports);
   const CHATGPT_HOSTS = /* @__PURE__ */ new Set(["chatgpt.com", "chat.openai.com"]);
+  const DEEPWIKI_HOSTS = /* @__PURE__ */ new Set(["deepwiki.com", "www.deepwiki.com"]);
   function parseChatGptConversationId(input) {
     const url = typeof input === "string" ? safeUrl(input) : input;
     if (!url || !isChatGptUrl(url)) {
@@ -1004,6 +1005,48 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     const url = typeof input === "string" ? safeUrl(input) : input;
     return Boolean(url && CHATGPT_HOSTS.has(url.hostname));
   }
+  function parseDeepWikiPageIdentity(input) {
+    const url = typeof input === "string" ? safeUrl(input) : input;
+    if (!url || !isDeepWikiUrl(url)) {
+      return null;
+    }
+    const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    if (segments.length === 0) {
+      return null;
+    }
+    if (segments[0] === "search") {
+      const searchId = segments[1] || "search";
+      return {
+        sourceThreadId: `deepwiki:search:${searchId}`,
+        route: segments.slice(1).join("/") || "search",
+        fallbackTitle: titleFromSlug(searchId) || "DeepWiki search"
+      };
+    }
+    if (segments[0].startsWith("_") || segments[0] === "api") {
+      return null;
+    }
+    const [owner, repo, ...routeParts] = segments;
+    if (!owner || !repo) {
+      return null;
+    }
+    return {
+      sourceThreadId: `deepwiki:${owner}/${repo}`,
+      owner,
+      repo,
+      route: routeParts.join("/") || "overview",
+      fallbackTitle: `${owner}/${repo} DeepWiki`
+    };
+  }
+  function isDeepWikiUrl(input) {
+    const url = typeof input === "string" ? safeUrl(input) : input;
+    return Boolean(url && DEEPWIKI_HOSTS.has(url.hostname));
+  }
+  function isCapturableSourceUrl(input) {
+    return isChatGptUrl(input) || parseDeepWikiPageIdentity(input) !== null;
+  }
+  function titleFromSlug(slug) {
+    return slug.replace(/_[0-9a-f-]{20,}$/i, "").replace(/[-_]+/g, " ").trim().replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
   function safeUrl(input) {
     try {
       return new URL(input);
@@ -1012,24 +1055,44 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
   }
   const CHATGPT_MATCH_PATTERNS = ["https://chatgpt.com/*", "https://chat.openai.com/*"];
+  const CAPTURABLE_MATCH_PATTERNS = [...CHATGPT_MATCH_PATTERNS, "https://deepwiki.com/*"];
   async function getActiveChatGptContext() {
+    var _a2;
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     const tab = tabs[0];
     if (!(tab == null ? void 0 : tab.url)) {
       return null;
     }
     const sourceThreadId = parseChatGptConversationId(tab.url);
-    if (!sourceThreadId) {
+    if (sourceThreadId) {
+      return {
+        source: "chatgpt",
+        sourceThreadId,
+        title: tab.title || "Untitled ChatGPT conversation",
+        url: tab.url
+      };
+    }
+    const deepWikiIdentity = parseDeepWikiPageIdentity(tab.url);
+    if (!deepWikiIdentity) {
       return null;
     }
     return {
-      sourceThreadId,
-      title: tab.title || "Untitled ChatGPT conversation",
+      source: "deepwiki",
+      sourceThreadId: deepWikiIdentity.sourceThreadId,
+      title: ((_a2 = tab.title) == null ? void 0 : _a2.replace(/\s*\|\s*DeepWiki\s*$/i, "").trim()) || deepWikiIdentity.fallbackTitle,
       url: tab.url
     };
   }
+  async function ensureActiveCapturableContentScript() {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs[0];
+    if (!tab) {
+      return;
+    }
+    await ensureChatGptContentScript(tab);
+  }
   async function broadcastToChatGptTabs(message) {
-    const tabs = await browser.tabs.query({ url: CHATGPT_MATCH_PATTERNS });
+    const tabs = await browser.tabs.query({ url: CAPTURABLE_MATCH_PATTERNS });
     await Promise.all(
       tabs.map(async (tab) => {
         if (!tab.id) {
@@ -1056,7 +1119,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   async function ensureChatGptContentScript(tab) {
     var _a2;
-    if (!tab.id || !tab.url || !isChatGptUrl(tab.url)) {
+    if (!tab.id || !tab.url || !isCapturableSourceUrl(tab.url)) {
       return;
     }
     const scripting = browser.scripting;
@@ -1081,7 +1144,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     switch (value.type) {
       case "CHATGPT_THREAD_CHANGED":
-        return typeof value.payload.sourceThreadId === "string" && typeof value.payload.title === "string" && typeof value.payload.url === "string";
+        return isOptionalCapturableSource(value.payload.source) && typeof value.payload.sourceThreadId === "string" && typeof value.payload.title === "string" && typeof value.payload.url === "string";
       case "SAVE_CHATGPT_MESSAGE":
         return isSaveChatGptPayload(value.payload);
       case "SAVE_CHATGPT_MESSAGE_RESULT":
@@ -1093,7 +1156,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       case "SET_ACTIVE_SAVE_TARGET":
         return typeof value.payload.threadId === "string" || value.payload.threadId === null;
       case "ACTIVE_SAVE_TARGET_CHANGED":
-        return (typeof value.payload.threadId === "string" || value.payload.threadId === null) && (typeof value.payload.title === "string" || value.payload.title === null) && (value.payload.source === "chatgpt" || value.payload.source === "notebook" || value.payload.source === null);
+        return (typeof value.payload.threadId === "string" || value.payload.threadId === null) && (typeof value.payload.title === "string" || value.payload.title === null) && (value.payload.source === "chatgpt" || value.payload.source === "deepwiki" || value.payload.source === "notebook" || value.payload.source === null);
       case "OPEN_SIDEBAR_WINDOW":
         return true;
       case "INSERT_TEXT_IN_CHATGPT":
@@ -1103,16 +1166,19 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       case "SOURCE_MESSAGE_SAVED_STATE_CHANGED":
         return typeof value.payload.sourceThreadId === "string" && typeof value.payload.sourceMessageKey === "string" && typeof value.payload.saved === "boolean";
       case "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES":
-        return typeof value.payload.sourceThreadId === "string" && Array.isArray(value.payload.sourceMessageKeys) && value.payload.sourceMessageKeys.every((key) => typeof key === "string");
+        return isOptionalCapturableSource(value.payload.source) && typeof value.payload.sourceThreadId === "string" && Array.isArray(value.payload.sourceMessageKeys) && value.payload.sourceMessageKeys.every((key) => typeof key === "string");
       default:
         return false;
     }
   }
   function isSaveChatGptPayload(value) {
-    return typeof value.sourceThreadId === "string" && typeof value.title === "string" && (typeof value.sourceMessageId === "string" || value.sourceMessageId === null) && typeof value.sourceMessageKey === "string" && typeof value.contentHash === "string" && isMessageRole(value.role) && typeof value.contentMarkdown === "string" && typeof value.contentText === "string" && (value.insertAfterId === void 0 || value.insertAfterId === null || typeof value.insertAfterId === "string");
+    return isOptionalCapturableSource(value.source) && typeof value.sourceThreadId === "string" && typeof value.title === "string" && (typeof value.sourceMessageId === "string" || value.sourceMessageId === null) && typeof value.sourceMessageKey === "string" && typeof value.contentHash === "string" && isMessageRole(value.role) && typeof value.contentMarkdown === "string" && typeof value.contentText === "string" && (value.insertAfterId === void 0 || value.insertAfterId === null || typeof value.insertAfterId === "string");
   }
   function isMessageRole(value) {
     return value === "assistant" || value === "user" || value === "system";
+  }
+  function isOptionalCapturableSource(value) {
+    return value === void 0 || value === "chatgpt" || value === "deepwiki";
   }
   function isSaveStatus(value) {
     return value === "created" || value === "already_saved" || value === "updated";
@@ -4241,8 +4307,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     await notesDb.aiOperationProposals.add(proposal);
     return proposal;
   }
-  async function getThreadBySource(sourceThreadId) {
-    return await notesDb.threads.where("[source+sourceThreadId]").equals(["chatgpt", sourceThreadId]).first() ?? null;
+  async function getThreadBySource(sourceThreadId, source = "chatgpt") {
+    return await notesDb.threads.where("[source+sourceThreadId]").equals([source, sourceThreadId]).first() ?? null;
   }
   async function getActiveSaveTargetThread() {
     const setting = await notesDb.settings.get("activeSaveTargetThreadId");
@@ -4281,7 +4347,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   async function appendSavedMessageFromChatGpt(input) {
     return notesDb.transaction("rw", notesDb.threads, notesDb.messages, notesDb.settings, async () => {
+      const source = input.source ?? "chatgpt";
       const thread = await getSaveTargetThreadInTransaction({
+        source,
         sourceThreadId: input.sourceThreadId,
         title: input.title
       });
@@ -4298,7 +4366,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           };
           const updatedThread2 = {
             ...thread,
-            title: thread.source === "chatgpt" ? input.title || thread.title : thread.title,
+            title: thread.source === source ? input.title || thread.title : thread.title,
             updatedAt: timestamp
           };
           await notesDb.messages.put(updatedMessage);
@@ -4333,9 +4401,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     const message = await notesDb.messages.where("[threadId+sourceMessageKey]").equals([threadId, sourceMessageKey]).first();
     return Boolean(message);
   }
-  async function getSavedStateForVisibleMessages(sourceThreadId, sourceMessageKeys) {
+  async function getSavedStateForVisibleMessages(sourceThreadId, sourceMessageKeys, source = "chatgpt") {
     const states = Object.fromEntries(sourceMessageKeys.map((key) => [key, false]));
-    const thread = await getActiveSaveTargetThread() ?? await getThreadBySource(sourceThreadId);
+    const thread = await getActiveSaveTargetThread() ?? await getThreadBySource(sourceThreadId, source);
     if (!thread || sourceMessageKeys.length === 0) {
       return states;
     }
@@ -4358,7 +4426,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     return getOrCreateThreadInTransaction(input);
   }
   async function getOrCreateThreadInTransaction(input) {
-    const existing = await notesDb.threads.where("[source+sourceThreadId]").equals(["chatgpt", input.sourceThreadId]).first();
+    const source = input.source ?? "chatgpt";
+    const existing = await notesDb.threads.where("[source+sourceThreadId]").equals([source, input.sourceThreadId]).first();
     if (existing) {
       if (input.title && existing.title !== input.title) {
         const updated = { ...existing, title: input.title, updatedAt: Date.now() };
@@ -4370,9 +4439,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     const timestamp = Date.now();
     const thread = {
       id: createId("thread"),
-      source: "chatgpt",
+      source,
       sourceThreadId: input.sourceThreadId,
-      title: input.title || "Untitled ChatGPT conversation",
+      title: input.title || getDefaultSourceThreadTitle(source),
       folderId: null,
       headMessageId: null,
       tailMessageId: null,
@@ -4383,6 +4452,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     };
     await notesDb.threads.add(thread);
     return thread;
+  }
+  function getDefaultSourceThreadTitle(source) {
+    return source === "deepwiki" ? "Untitled DeepWiki page" : "Untitled ChatGPT conversation";
   }
   async function getNextThreadSortOrderInTransaction() {
     const threads = await notesDb.threads.toArray();
@@ -4569,9 +4641,11 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       case "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES":
         return getSavedStateForVisibleMessages(
           message.payload.sourceThreadId,
-          message.payload.sourceMessageKeys
+          message.payload.sourceMessageKeys,
+          message.payload.source === "deepwiki" ? "deepwiki" : "chatgpt"
         );
       case "GET_ACTIVE_CHATGPT_CONTEXT":
+        await ensureActiveCapturableContentScript();
         return getActiveChatGptContext();
       case "GET_ACTIVE_SAVE_TARGET":
         return getActiveSaveTargetThread();

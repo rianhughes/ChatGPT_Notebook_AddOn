@@ -23,7 +23,7 @@ export type RuntimeMessageType =
 
 export type ChatGptThreadChangedMessage = {
   type: "CHATGPT_THREAD_CHANGED";
-  payload: { sourceThreadId: string; title: string; url: string };
+  payload: { source?: ChatGptThread["source"]; sourceThreadId: string; title: string; url: string };
 };
 
 export type SaveChatGptMessage = {
@@ -92,6 +92,7 @@ export type SourceMessageSavedStateChangedMessage = {
 export type RequestSavedStateForVisibleMessagesMessage = {
   type: "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES";
   payload: {
+    source?: ChatGptThread["source"];
     sourceThreadId: string;
     sourceMessageKeys: string[];
   };
@@ -148,6 +149,7 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
   switch (value.type) {
     case "CHATGPT_THREAD_CHANGED":
       return (
+        isOptionalCapturableSource(value.payload.source) &&
         typeof value.payload.sourceThreadId === "string" &&
         typeof value.payload.title === "string" &&
         typeof value.payload.url === "string"
@@ -172,6 +174,7 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
         (typeof value.payload.threadId === "string" || value.payload.threadId === null) &&
         (typeof value.payload.title === "string" || value.payload.title === null) &&
         (value.payload.source === "chatgpt" ||
+          value.payload.source === "deepwiki" ||
           value.payload.source === "notebook" ||
           value.payload.source === null)
       );
@@ -189,6 +192,7 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
       );
     case "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES":
       return (
+        isOptionalCapturableSource(value.payload.source) &&
         typeof value.payload.sourceThreadId === "string" &&
         Array.isArray(value.payload.sourceMessageKeys) &&
         value.payload.sourceMessageKeys.every((key) => typeof key === "string")
@@ -200,6 +204,7 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
 
 function isSaveChatGptPayload(value: Record<string, unknown>): value is SaveChatGptMessageInput {
   return (
+    isOptionalCapturableSource(value.source) &&
     typeof value.sourceThreadId === "string" &&
     typeof value.title === "string" &&
     (typeof value.sourceMessageId === "string" || value.sourceMessageId === null) &&
@@ -216,6 +221,12 @@ function isSaveChatGptPayload(value: Record<string, unknown>): value is SaveChat
 
 function isMessageRole(value: unknown): value is Extract<MessageRole, "assistant" | "user" | "system"> {
   return value === "assistant" || value === "user" || value === "system";
+}
+
+function isOptionalCapturableSource(
+  value: unknown,
+): value is Extract<ChatGptThread["source"], "chatgpt" | "deepwiki"> | undefined {
+  return value === undefined || value === "chatgpt" || value === "deepwiki";
 }
 
 function isSaveStatus(value: unknown): value is SaveMessageStatus {

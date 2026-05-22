@@ -92,16 +92,62 @@ describe("ThreadList folders", () => {
 
     expect(onRenameFolder).toHaveBeenCalledWith("work", "Renamed folder");
   });
+
+  it("calls notebook row reorder when a notebook is dropped within its folder", async () => {
+    const onMoveThreadAfter = vi.fn();
+
+    await renderThreadList({
+      onMoveThreadAfter,
+      threads: [
+        thread({ id: "thread-work", title: "Work notebook", folderId: "work" }),
+        thread({ id: "thread-second", title: "Second notebook", folderId: "work" }),
+        thread({ id: "thread-loose", title: "Loose notebook", folderId: null }),
+      ],
+    });
+
+    await act(() => {
+      getToggle("folder-work-notebooks").click();
+    });
+
+    const dragged = getThreadRow("thread-work");
+    const target = getThreadRow("thread-second");
+    setRowBounds(target, { top: 0, height: 100 });
+
+    await act(() => {
+      dragged.dispatchEvent(createDragEvent("dragstart", { dataTransfer: createDataTransfer() }));
+    });
+
+    const dataTransfer = createDataTransfer({ "text/plain": "thread-work" });
+
+    await act(() => {
+      target.dispatchEvent(createDragEvent("dragover", { clientY: 75, dataTransfer }));
+    });
+    await act(() => {
+      target.dispatchEvent(createDragEvent("drop", { clientY: 75, dataTransfer }));
+    });
+
+    expect(onMoveThreadAfter).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "thread-work" }),
+      "thread-second",
+    );
+  });
 });
 
 type RenderThreadListOptions = {
   onRenameThread?: (threadId: string, title: string) => void;
   onRenameFolder?: (folderId: string, title: string) => void;
+  onMoveThreadAfter?: (thread: ChatGptThread, afterThreadId: string | null) => void;
+  threads?: ChatGptThread[];
 };
 
 async function renderThreadList({
   onRenameThread = vi.fn(),
   onRenameFolder = vi.fn(),
+  onMoveThreadAfter = vi.fn(),
+  threads = [
+    thread({ id: "thread-work", title: "Work notebook", folderId: "work" }),
+    thread({ id: "thread-loose", title: "Loose notebook", folderId: null }),
+  ],
 }: RenderThreadListOptions = {}) {
   host = document.createElement("div");
   root = createRoot(host);
@@ -109,10 +155,7 @@ async function renderThreadList({
   await act(() => {
     root?.render(
       <ThreadList
-        threads={[
-          thread({ id: "thread-work", title: "Work notebook", folderId: "work" }),
-          thread({ id: "thread-loose", title: "Loose notebook", folderId: null }),
-        ]}
+        threads={threads}
         folders={[folder({ id: "work", title: "Work" })]}
         filter=""
         newNotebookTitle=""
@@ -129,11 +172,66 @@ async function renderThreadList({
         onRenameThread={onRenameThread}
         onRenameFolder={onRenameFolder}
         onMoveThreadToFolder={vi.fn()}
+        onMoveThreadAfter={onMoveThreadAfter}
         onDeleteThread={vi.fn()}
         onDeleteFolder={vi.fn()}
+        onExportBackup={vi.fn()}
+        onImportBackup={vi.fn()}
       />,
     );
   });
+}
+
+function getThreadRow(threadId: string): HTMLElement {
+  const row = host?.querySelector<HTMLElement>(`[data-notebook-thread-row-id="${threadId}"]`) ?? null;
+
+  if (!row) {
+    throw new Error(`Missing thread row ${threadId}`);
+  }
+
+  return row;
+}
+
+function setRowBounds(row: HTMLElement, bounds: { top: number; height: number }): void {
+  row.getBoundingClientRect = () =>
+    ({
+      x: 0,
+      y: bounds.top,
+      top: bounds.top,
+      left: 0,
+      right: 200,
+      bottom: bounds.top + bounds.height,
+      width: 200,
+      height: bounds.height,
+      toJSON: () => ({}),
+    }) as DOMRect;
+}
+
+function createDataTransfer(initialData: Record<string, string> = {}): DataTransfer {
+  const store = new Map(Object.entries(initialData));
+
+  return {
+    dropEffect: "none",
+    effectAllowed: "all",
+    getData: (type: string) => store.get(type) ?? "",
+    setData: (type: string, value: string) => {
+      store.set(type, value);
+    },
+  } as DataTransfer;
+}
+
+function createDragEvent(
+  type: string,
+  options: { clientY?: number; dataTransfer: DataTransfer },
+): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+
+  Object.defineProperties(event, {
+    clientY: { value: options.clientY ?? 0 },
+    dataTransfer: { value: options.dataTransfer },
+  });
+
+  return event;
 }
 
 function getToggle(contentId: string): HTMLButtonElement {

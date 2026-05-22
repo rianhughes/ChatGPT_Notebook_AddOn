@@ -1,4 +1,4 @@
-export type ThreadSource = "chatgpt" | "notebook";
+export type ThreadSource = "chatgpt" | "deepwiki" | "notebook";
 
 export type MessageRole = "assistant" | "user" | "system" | "note";
 
@@ -147,6 +147,7 @@ export type SavedMessage = {
 };
 
 export type ChatGptThreadInput = {
+  source?: Extract<ThreadSource, "chatgpt" | "deepwiki">;
   sourceThreadId: string;
   title: string;
 };
@@ -161,6 +162,7 @@ export type NotebookFolderInput = {
 };
 
 export type SaveChatGptMessageInput = {
+  source?: Extract<ThreadSource, "chatgpt" | "deepwiki">;
   sourceThreadId: string;
   title: string;
   sourceMessageId: string | null;

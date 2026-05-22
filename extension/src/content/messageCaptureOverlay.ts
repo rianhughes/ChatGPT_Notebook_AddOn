@@ -3,12 +3,7 @@ import { sendRuntimeMessage } from "../browser/runtime";
 import { parseAiOperationPackagesFromMarkdown } from "../core/aiOperationProtocol";
 import type { SaveChatGptMessageResponse, SubmitAiOperationPackageResponse } from "../core/ports";
 import { isExtensionMessage } from "../core/ports";
-import {
-  extractMessageFromContainer,
-  extractSelectionFromDocument,
-  findConversationRoot,
-  findVisibleMessageContainers,
-} from "./chatgptDomAdapter";
+import type { MessageCaptureAdapter } from "./sourceAdapter";
 
 const BOUND_ATTRIBUTE = "data-cgpt-notes-bound";
 const ACTION_ATTRIBUTE = "data-cgpt-notes-action";
@@ -17,7 +12,6 @@ const BUTTON_CLASS = "cgpt-notes-save-button";
 const BUTTON_ICON_CLASS = "cgpt-notes-save-button-icon";
 const AI_OPS_BUTTON_CLASS = "cgpt-notes-ai-ops-button";
 const SELECTION_POPOVER_CLASS = "cgpt-notes-selection-popover";
-const EXPORT_LABEL = "Export to ChatGPT Note";
 const AI_OPS_LABEL = "Review note changes";
 
 export type OverlayController = {
@@ -25,9 +19,9 @@ export type OverlayController = {
   stop(): void;
 };
 
-export function startMessageCaptureOverlay(): OverlayController {
-  const root = findConversationRoot();
-  const selectionButton = createSelectionButton();
+export function startMessageCaptureOverlay(adapter: MessageCaptureAdapter): OverlayController {
+  const root = adapter.findConversationRoot();
+  const selectionButton = createSelectionButton(adapter);
   let refreshHandle: number | null = null;
   let selectionHandle: number | null = null;
   let stopped = false;
@@ -97,7 +91,7 @@ export function startMessageCaptureOverlay(): OverlayController {
 
     selectionHandle = window.setTimeout(() => {
       selectionHandle = null;
-      updateSelectionButton(selectionButton);
+      updateSelectionButton(selectionButton, adapter);
     }, 80);
   }
 
@@ -106,15 +100,15 @@ export function startMessageCaptureOverlay(): OverlayController {
       return;
     }
 
-    const containers = findVisibleMessageContainers(root);
+    const containers = adapter.findVisibleMessageContainers(root);
 
     containers.forEach((container) => {
       if (
         !container.hasAttribute(BOUND_ATTRIBUTE) ||
         !getMessageButton(container) ||
-        (hasAiOperationPackage(container) && !getAiOperationsButton(container))
+        (hasAiOperationPackage(container, adapter) && !getAiOperationsButton(container))
       ) {
-        attachButton(container);
+        attachButton(container, adapter);
       }
     });
   }
@@ -140,34 +134,34 @@ export function startMessageCaptureOverlay(): OverlayController {
     }
 
     if (action === "export-selection") {
-      void saveSelectedMessage(button);
+      void saveSelectedMessage(button, adapter);
       return;
     }
 
     const container = button.closest<HTMLElement>(`[${BOUND_ATTRIBUTE}]`);
 
     if (!container) {
-      setButtonError(button);
+      setButtonError(button, adapter);
       return;
     }
 
     if (action === "review-ai-ops") {
-      void reviewAiOperations(container, button);
+      void reviewAiOperations(container, button, adapter);
       return;
     }
 
-    void saveContainerMessage(container, button);
+    void saveContainerMessage(container, button, adapter);
   }
 }
 
-function createSelectionButton(): HTMLButtonElement {
+function createSelectionButton(adapter: MessageCaptureAdapter): HTMLButtonElement {
   const button = document.createElement("button");
 
   button.type = "button";
   button.className = `${BUTTON_CLASS} ${SELECTION_POPOVER_CLASS}`;
-  setButtonContent(button);
-  button.title = "Export selected text to ChatGPT Notes";
-  button.setAttribute("aria-label", "Export selected text to ChatGPT Notes");
+  setButtonContent(button, adapter);
+  button.title = adapter.labels.exportSelection;
+  button.setAttribute("aria-label", adapter.labels.exportSelection);
   button.setAttribute(ACTION_ATTRIBUTE, "export-selection");
 
   button.addEventListener("mousedown", (event) => {
@@ -175,11 +169,11 @@ function createSelectionButton(): HTMLButtonElement {
   });
 
   document.body.append(button);
-  hideSelectionButton(button);
+  hideSelectionButton(button, adapter);
   return button;
 }
 
-function attachButton(container: HTMLElement): void {
+function attachButton(container: HTMLElement, adapter: MessageCaptureAdapter): void {
   container.querySelectorAll(`.${OVERLAY_CLASS}`).forEach((element) => element.remove());
 
   const wrapper = document.createElement("span");
@@ -188,14 +182,14 @@ function attachButton(container: HTMLElement): void {
   wrapper.className = OVERLAY_CLASS;
   button.type = "button";
   button.className = BUTTON_CLASS;
-  setButtonContent(button);
-  button.title = "Export message to ChatGPT Notes";
-  button.setAttribute("aria-label", "Export message to ChatGPT Notes");
+  setButtonContent(button, adapter);
+  button.title = adapter.labels.exportMessage;
+  button.setAttribute("aria-label", adapter.labels.exportMessage);
   button.setAttribute(ACTION_ATTRIBUTE, "export-message");
 
   wrapper.append(button);
 
-  const aiOpsButton = createAiOperationsButton(container);
+  const aiOpsButton = createAiOperationsButton(container, adapter);
 
   if (aiOpsButton) {
     wrapper.append(aiOpsButton);
@@ -205,12 +199,12 @@ function attachButton(container: HTMLElement): void {
   container.setAttribute(BOUND_ATTRIBUTE, "true");
 }
 
-function createAiOperationsButton(container: HTMLElement): HTMLButtonElement | null {
-  if (!hasAiOperationPackage(container)) {
+function createAiOperationsButton(container: HTMLElement, adapter: MessageCaptureAdapter): HTMLButtonElement | null {
+  if (!adapter.supportsAiOperations || !hasAiOperationPackage(container, adapter)) {
     return null;
   }
 
-  const extracted = extractMessageFromContainer(container);
+  const extracted = adapter.extractMessageFromContainer(container);
 
   if (!extracted || extracted.role !== "assistant") {
     return null;
@@ -235,8 +229,12 @@ function createAiOperationsButton(container: HTMLElement): HTMLButtonElement | n
   return button;
 }
 
-function hasAiOperationPackage(container: HTMLElement): boolean {
-  const extracted = extractMessageFromContainer(container);
+function hasAiOperationPackage(container: HTMLElement, adapter: MessageCaptureAdapter): boolean {
+  if (!adapter.supportsAiOperations) {
+    return false;
+  }
+
+  const extracted = adapter.extractMessageFromContainer(container);
 
   if (!extracted || extracted.role !== "assistant") {
     return false;
@@ -250,17 +248,21 @@ function hasAiOperationPackage(container: HTMLElement): boolean {
   );
 }
 
-async function saveContainerMessage(container: HTMLElement, button: HTMLButtonElement): Promise<void> {
-  const extracted = extractMessageFromContainer(container);
+async function saveContainerMessage(
+  container: HTMLElement,
+  button: HTMLButtonElement,
+  adapter: MessageCaptureAdapter,
+): Promise<void> {
+  const extracted = adapter.extractMessageFromContainer(container);
 
   if (!extracted) {
-    setButtonError(button);
+    setButtonError(button, adapter);
     return;
   }
 
   button.disabled = true;
   button.classList.remove("has-error");
-  setButtonContent(button);
+  setButtonContent(button, adapter);
   let exported = false;
 
   try {
@@ -268,6 +270,7 @@ async function saveContainerMessage(container: HTMLElement, button: HTMLButtonEl
       type: "SAVE_CHATGPT_MESSAGE",
       payload: {
         sourceThreadId: extracted.sourceThreadId,
+        source: extracted.source,
         title: extracted.title,
         sourceMessageId: extracted.sourceMessageId,
         sourceMessageKey: createExportSourceMessageKey(extracted.sourceMessageKey),
@@ -279,26 +282,26 @@ async function saveContainerMessage(container: HTMLElement, button: HTMLButtonEl
     });
     exported = true;
   } catch {
-    setButtonError(button);
+    setButtonError(button, adapter);
   } finally {
     button.disabled = false;
     if (exported) {
-      resetExportButton(button);
+      resetExportButton(button, adapter);
     }
   }
 }
 
-async function saveSelectedMessage(button: HTMLButtonElement): Promise<void> {
-  const extracted = extractSelectionFromDocument(window.getSelection());
+async function saveSelectedMessage(button: HTMLButtonElement, adapter: MessageCaptureAdapter): Promise<void> {
+  const extracted = adapter.extractSelectionFromDocument(window.getSelection());
 
   if (!extracted) {
-    hideSelectionButton(button);
+    hideSelectionButton(button, adapter);
     return;
   }
 
   button.disabled = true;
   button.classList.remove("has-error");
-  setButtonContent(button);
+  setButtonContent(button, adapter);
   let exported = false;
 
   try {
@@ -306,6 +309,7 @@ async function saveSelectedMessage(button: HTMLButtonElement): Promise<void> {
       type: "SAVE_CHATGPT_MESSAGE",
       payload: {
         sourceThreadId: extracted.sourceThreadId,
+        source: extracted.source,
         title: extracted.title,
         sourceMessageId: extracted.sourceMessageId,
         sourceMessageKey: createExportSourceMessageKey(extracted.sourceMessageKey),
@@ -316,22 +320,26 @@ async function saveSelectedMessage(button: HTMLButtonElement): Promise<void> {
       },
     });
     exported = true;
-    window.setTimeout(() => hideSelectionButton(button), 900);
+    window.setTimeout(() => hideSelectionButton(button, adapter), 900);
   } catch {
-    setButtonError(button);
+    setButtonError(button, adapter);
   } finally {
     button.disabled = false;
     if (exported) {
-      resetExportButton(button);
+      resetExportButton(button, adapter);
     }
   }
 }
 
-async function reviewAiOperations(container: HTMLElement, button: HTMLButtonElement): Promise<void> {
-  const extracted = extractMessageFromContainer(container);
+async function reviewAiOperations(
+  container: HTMLElement,
+  button: HTMLButtonElement,
+  adapter: MessageCaptureAdapter,
+): Promise<void> {
+  const extracted = adapter.extractMessageFromContainer(container);
 
   if (!extracted) {
-    setButtonError(button);
+    setButtonError(button, adapter);
     return;
   }
 
@@ -341,7 +349,7 @@ async function reviewAiOperations(container: HTMLElement, button: HTMLButtonElem
   });
 
   if (!operationPackage) {
-    setButtonError(button);
+    setButtonError(button, adapter);
     return;
   }
 
@@ -358,10 +366,10 @@ async function reviewAiOperations(container: HTMLElement, button: HTMLButtonElem
     queued = response.queued;
 
     if (!response.queued) {
-      setButtonError(button);
+      setButtonError(button, adapter);
     }
   } catch {
-    setButtonError(button);
+    setButtonError(button, adapter);
   } finally {
     button.disabled = false;
 
@@ -371,12 +379,12 @@ async function reviewAiOperations(container: HTMLElement, button: HTMLButtonElem
   }
 }
 
-function updateSelectionButton(button: HTMLButtonElement): void {
+function updateSelectionButton(button: HTMLButtonElement, adapter: MessageCaptureAdapter): void {
   const selection = window.getSelection();
-  const extracted = extractSelectionFromDocument(selection);
+  const extracted = adapter.extractSelectionFromDocument(selection);
 
   if (!selection || !extracted) {
-    hideSelectionButton(button);
+    hideSelectionButton(button, adapter);
     return;
   }
 
@@ -384,13 +392,13 @@ function updateSelectionButton(button: HTMLButtonElement): void {
   const rect = getUsefulRangeRect(range);
 
   if (!rect) {
-    hideSelectionButton(button);
+    hideSelectionButton(button, adapter);
     return;
   }
 
   button.classList.remove("is-saved", "has-error");
   button.disabled = false;
-  setButtonContent(button);
+  setButtonContent(button, adapter);
   button.style.left = `${Math.min(window.innerWidth - 16, Math.max(8, rect.left + rect.width / 2))}px`;
   button.style.top = `${Math.max(8, rect.top - 42)}px`;
   button.style.display = "inline-flex";
@@ -415,26 +423,26 @@ function getUsefulRangeRect(range: Range): DOMRect | null {
   return fallback.width > 0 && fallback.height > 0 ? fallback : null;
 }
 
-function hideSelectionButton(button: HTMLButtonElement): void {
+function hideSelectionButton(button: HTMLButtonElement, adapter: MessageCaptureAdapter): void {
   button.style.display = "none";
   button.classList.remove("is-saved", "has-error");
   button.disabled = false;
-  button.textContent = EXPORT_LABEL;
+  button.textContent = adapter.labels.exportMessage;
 }
 
-function resetExportButton(button: HTMLButtonElement): void {
+function resetExportButton(button: HTMLButtonElement, adapter: MessageCaptureAdapter): void {
   button.classList.remove("is-saved", "has-error");
-  setButtonContent(button);
+  setButtonContent(button, adapter);
 }
 
-function setButtonError(button: HTMLButtonElement): void {
+function setButtonError(button: HTMLButtonElement, adapter: MessageCaptureAdapter): void {
   button.classList.add("has-error");
   button.classList.remove("is-saved");
-  setButtonContent(button);
+  setButtonContent(button, adapter);
   button.disabled = false;
 }
 
-function setButtonContent(button: HTMLButtonElement): void {
+function setButtonContent(button: HTMLButtonElement, adapter: MessageCaptureAdapter): void {
   if (button.getAttribute(ACTION_ATTRIBUTE) === "review-ai-ops") {
     button.textContent = AI_OPS_LABEL;
     return;
@@ -449,7 +457,7 @@ function setButtonContent(button: HTMLButtonElement): void {
   icon.setAttribute("aria-hidden", "true");
 
   const label = document.createElement("span");
-  label.textContent = EXPORT_LABEL;
+  label.textContent = adapter.labels.exportMessage;
 
   button.append(icon, label);
 }

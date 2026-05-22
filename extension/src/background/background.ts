@@ -1,6 +1,7 @@
 import browser from "../browser/extensionApi";
 import {
   broadcastToChatGptTabs,
+  ensureActiveCapturableContentScript,
   ensureChatGptContentScript,
   getActiveChatGptContext,
   sendMessageToActiveChatGptTab,
@@ -81,8 +82,10 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       return getSavedStateForVisibleMessages(
         message.payload.sourceThreadId,
         message.payload.sourceMessageKeys,
+        message.payload.source === "deepwiki" ? "deepwiki" : "chatgpt",
       );
     case "GET_ACTIVE_CHATGPT_CONTEXT":
+      await ensureActiveCapturableContentScript();
       return getActiveChatGptContext();
     case "GET_ACTIVE_SAVE_TARGET":
       return getActiveSaveTargetThread();

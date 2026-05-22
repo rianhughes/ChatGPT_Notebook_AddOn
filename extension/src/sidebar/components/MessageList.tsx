@@ -3,7 +3,7 @@ import type { ClipboardEvent, DragEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { formatPastedNoteMarkdown, markdownToPlainText } from "../../core/markdown";
-import type { SavedMessage } from "../../core/models";
+import type { SavedMessage, ThreadSource } from "../../core/models";
 import {
   encodeNoteSelectionDragPayload,
   NOTE_SELECTION_DRAG_TYPE,
@@ -15,12 +15,15 @@ import { MessageActions } from "./MessageActions";
 
 type MessageListProps = {
   messages: SavedMessage[];
+  threadSource?: ThreadSource;
   undoableMessageIds: Set<string>;
   canUndoDeletedMessage: boolean;
   selectedMessageIds: Set<string>;
+  autoEditMessageId?: string | null;
   isSelectingForMerge: boolean;
   collapsedMessageIds: Set<string>;
   canReorderMessages: boolean;
+  onAutoEditMessageHandled?(): void;
   onCollapsedMessageIdsChange(updater: (current: Set<string>) => Set<string>): void;
   onToggleMessageSelection(messageId: string): void;
   onMoveMessageAfter(message: SavedMessage, afterMessageId: string | null): void;
@@ -46,12 +49,15 @@ type MessageListProps = {
 
 export function MessageList({
   messages,
+  threadSource = "notebook",
   undoableMessageIds,
   canUndoDeletedMessage,
   selectedMessageIds,
+  autoEditMessageId = null,
   isSelectingForMerge,
   collapsedMessageIds,
   canReorderMessages,
+  onAutoEditMessageHandled,
   onCollapsedMessageIdsChange,
   onToggleMessageSelection,
   onMoveMessageAfter,
@@ -86,6 +92,8 @@ export function MessageList({
     messageId: string;
     headingIndex: number;
   } | null>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const handledAutoEditMessageIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (editingMessageId && collapsedMessageIds.has(editingMessageId)) {
@@ -100,6 +108,48 @@ export function MessageList({
       setActiveHeadingSection(null);
     }
   }, [activeHeadingSection, collapsedMessageIds, editingMessageId, selectedTextEdit]);
+
+  useEffect(() => {
+    if (!autoEditMessageId) {
+      handledAutoEditMessageIdRef.current = null;
+      return;
+    }
+
+    if (handledAutoEditMessageIdRef.current === autoEditMessageId) {
+      return;
+    }
+
+    const message = messages.find((item) => item.id === autoEditMessageId);
+
+    if (!message) {
+      return;
+    }
+
+    handledAutoEditMessageIdRef.current = autoEditMessageId;
+    startEditing(message);
+    onAutoEditMessageHandled?.();
+  }, [autoEditMessageId, messages, onAutoEditMessageHandled]);
+
+  useEffect(() => {
+    if (!editingMessageId) {
+      return;
+    }
+
+    const titleInput = titleInputRef.current;
+
+    if (!titleInput) {
+      return;
+    }
+
+    const messageRow = getMessageRowElement(editingMessageId);
+
+    if (typeof messageRow?.scrollIntoView === "function") {
+      messageRow.scrollIntoView({ block: "nearest" });
+    }
+
+    titleInput.focus();
+    titleInput.select();
+  }, [editingMessageId]);
 
   useEffect(() => {
     function deleteSelectedTextOnBackspace(event: globalThis.KeyboardEvent) {
@@ -169,13 +219,9 @@ export function MessageList({
     );
   }
 
-  function toggleEditing(message: SavedMessage) {
-    if (editingMessageId === message.id) {
-      cancelEdit();
-      return;
-    }
-
+  function startEditing(message: SavedMessage) {
     clearActiveHeadingSection(message.id);
+    setSelectedTextEdit(null);
     setEditingMessageId(message.id);
     setDraftTitle(getNoteHeaderParts(message.contentMarkdown || message.contentText, message.title).header);
     setDraftMarkdown(message.contentMarkdown || message.contentText);
@@ -188,6 +234,15 @@ export function MessageList({
       next.delete(message.id);
       return next;
     });
+  }
+
+  function toggleEditing(message: SavedMessage) {
+    if (editingMessageId === message.id) {
+      cancelEdit();
+      return;
+    }
+
+    startEditing(message);
   }
 
   function handleEditMessage(message: SavedMessage) {
@@ -485,6 +540,7 @@ export function MessageList({
               isDropAfter ? " is-drop-after" : ""
             }`}
             key={message.id}
+            data-note-message-row-id={message.id}
             onDragEnd={handleMessageDragEnd}
             onDragLeave={(event) => handleMessageDragLeave(message, event)}
             onDragOver={(event) => handleMessageDragOver(message, event)}
@@ -532,6 +588,7 @@ export function MessageList({
                     <label className="message-editor-title-field">
                       <span className="sr-only">Note header</span>
                       <input
+                        ref={isEditing ? titleInputRef : undefined}
                         className="message-editor-title-input"
                         type="text"
                         value={draftTitle}
@@ -601,6 +658,7 @@ export function MessageList({
                     ) : null}
                     <MarkdownContent
                       markdown={noteHeader.bodyMarkdown}
+                      className={threadSource === "deepwiki" ? "rendered-message-deepwiki" : undefined}
                       collapseAllHeadings={areHeadingsCollapsed}
                       selectedHeadingIndex={activeHeadingIndex}
                       loadImageAssetUrl={loadImageAssetUrl}
@@ -723,6 +781,14 @@ function getMessageElement(messageId: string): HTMLElement | null {
   return (
     Array.from(document.querySelectorAll<HTMLElement>("[data-note-message-id]")).find(
       (element) => element.dataset.noteMessageId === messageId,
+    ) ?? null
+  );
+}
+
+function getMessageRowElement(messageId: string): HTMLElement | null {
+  return (
+    Array.from(document.querySelectorAll<HTMLElement>("[data-note-message-row-id]")).find(
+      (element) => element.dataset.noteMessageRowId === messageId,
     ) ?? null
   );
 }

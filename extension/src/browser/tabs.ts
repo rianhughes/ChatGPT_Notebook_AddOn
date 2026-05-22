@@ -1,9 +1,15 @@
 import browser from "./extensionApi";
 import type { ExtensionMessage } from "../core/ports";
 import type { ChatGptContext } from "../core/threadIdentity";
-import { isChatGptUrl, parseChatGptConversationId } from "../core/threadIdentity";
+import {
+  isCapturableSourceUrl,
+  isChatGptUrl,
+  parseChatGptConversationId,
+  parseDeepWikiPageIdentity,
+} from "../core/threadIdentity";
 
 const CHATGPT_MATCH_PATTERNS = ["https://chatgpt.com/*", "https://chat.openai.com/*"];
+const CAPTURABLE_MATCH_PATTERNS = [...CHATGPT_MATCH_PATTERNS, "https://deepwiki.com/*"];
 
 type ScriptableTab = {
   id?: number;
@@ -25,19 +31,42 @@ export async function getActiveChatGptContext(): Promise<ChatGptContext | null> 
 
   const sourceThreadId = parseChatGptConversationId(tab.url);
 
-  if (!sourceThreadId) {
+  if (sourceThreadId) {
+    return {
+      source: "chatgpt",
+      sourceThreadId,
+      title: tab.title || "Untitled ChatGPT conversation",
+      url: tab.url,
+    };
+  }
+
+  const deepWikiIdentity = parseDeepWikiPageIdentity(tab.url);
+
+  if (!deepWikiIdentity) {
     return null;
   }
 
   return {
-    sourceThreadId,
-    title: tab.title || "Untitled ChatGPT conversation",
+    source: "deepwiki",
+    sourceThreadId: deepWikiIdentity.sourceThreadId,
+    title: tab.title?.replace(/\s*\|\s*DeepWiki\s*$/i, "").trim() || deepWikiIdentity.fallbackTitle,
     url: tab.url,
   };
 }
 
+export async function ensureActiveCapturableContentScript(): Promise<void> {
+  const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+  const tab = tabs[0];
+
+  if (!tab) {
+    return;
+  }
+
+  await ensureChatGptContentScript(tab);
+}
+
 export async function broadcastToChatGptTabs(message: ExtensionMessage): Promise<void> {
-  const tabs = await browser.tabs.query({ url: CHATGPT_MATCH_PATTERNS });
+  const tabs = await browser.tabs.query({ url: CAPTURABLE_MATCH_PATTERNS });
 
   await Promise.all(
     tabs.map(async (tab) => {
@@ -72,7 +101,7 @@ export async function sendMessageToActiveChatGptTab<TResponse>(
 }
 
 export async function ensureChatGptContentScript(tab: ScriptableTab): Promise<void> {
-  if (!tab.id || !tab.url || !isChatGptUrl(tab.url)) {
+  if (!tab.id || !tab.url || !isCapturableSourceUrl(tab.url)) {
     return;
   }
 

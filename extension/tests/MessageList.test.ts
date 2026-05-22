@@ -425,6 +425,63 @@ describe("MessageList note headers", () => {
     });
   });
 
+  it("opens the requested note in edit mode and focuses the title field", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = { ...message("new-note", ""), role: "note" as const, title: "New note" };
+    const onAutoEditMessageHandled = vi.fn();
+
+    function Harness() {
+      const [collapsedMessageIds, setCollapsedMessageIds] = React.useState<Set<string>>(() => new Set([note.id]));
+      const [autoEditMessageId, setAutoEditMessageId] = React.useState<string | null>(note.id);
+
+      return React.createElement(MessageList, {
+        messages: [note],
+        undoableMessageIds: new Set<string>(),
+        canUndoDeletedMessage: false,
+        selectedMessageIds: new Set<string>(),
+        autoEditMessageId,
+        isSelectingForMerge: false,
+        collapsedMessageIds,
+        canReorderMessages: false,
+        onAutoEditMessageHandled: () => {
+          setAutoEditMessageId(null);
+          onAutoEditMessageHandled();
+        },
+        onCollapsedMessageIdsChange: setCollapsedMessageIds,
+        onToggleMessageSelection: vi.fn(),
+        onMoveMessageAfter: vi.fn(),
+        onMakeSelectionHeading: vi.fn(),
+        onInsertMessage: vi.fn(),
+        onInsertMessageSection: vi.fn(),
+        onMoveSelectedTextToSection: vi.fn(),
+        onSaveSelectedTextEdit: vi.fn(async () => undefined),
+        onSaveMessageEdit: vi.fn(async () => undefined),
+        onDeleteMessage: vi.fn(),
+        onDeleteMessageSection: vi.fn(),
+        onDeleteSelectedText: vi.fn(),
+        onUndoMessageEdit: vi.fn(),
+        onUndoDeletedMessage: vi.fn(),
+      });
+    }
+
+    await act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    const titleInput = host.querySelector<HTMLInputElement>(".message-editor-title-input");
+
+    expect(titleInput).not.toBeNull();
+    expect(titleInput?.value).toBe("New note");
+    expect(document.activeElement).toBe(titleInput);
+    expect(onAutoEditMessageHandled).toHaveBeenCalledTimes(1);
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
   it("activates the H2 button for a clicked heading and routes it to unmake that section", async () => {
     const host = document.createElement("div");
     document.body.append(host);

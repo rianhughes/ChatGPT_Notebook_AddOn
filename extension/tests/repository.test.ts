@@ -17,12 +17,15 @@ import {
   getFolders,
   getNotebookAsset,
   getMessagesInOrder,
+  getNotebookBackupSnapshot,
   getSavedStateForVisibleMessages,
   getThread,
   getThreadBySource,
   getThreads,
   mergeMessages,
+  mergeNotebookDataFromBackup,
   moveMessageAfterMessage,
+  moveThreadAfterThread,
   moveThreadToFolder,
   renameNotebook,
   renameFolder,
@@ -52,6 +55,21 @@ describe("repository", () => {
     expect(updated.status).toBe("updated");
     expect(messages).toHaveLength(1);
     expect(messages[0].contentText).toBe("hello world");
+  });
+
+  it("keeps DeepWiki and ChatGPT source threads separate", async () => {
+    const chatGpt = await appendSavedMessageFromChatGpt(saveInput("shared", "chat note"));
+    const deepWiki = await appendSavedMessageFromChatGpt({
+      ...saveInput("shared", "wiki note"),
+      source: "deepwiki",
+      title: "RPC System",
+    });
+
+    expect(chatGpt.thread.source).toBe("chatgpt");
+    expect(deepWiki.thread.source).toBe("deepwiki");
+    expect(chatGpt.thread.id).not.toBe(deepWiki.thread.id);
+    expect(await getThreadBySource("conversation", "chatgpt")).toMatchObject({ id: chatGpt.thread.id });
+    expect(await getThreadBySource("conversation", "deepwiki")).toMatchObject({ id: deepWiki.thread.id });
   });
 
   it("appends repeated exports when each click has a unique export key", async () => {
@@ -364,6 +382,21 @@ describe("repository", () => {
     expect((await getThread(second.id))?.folderId).toBeNull();
   });
 
+  it("moves notebooks directly after another notebook within the same folder", async () => {
+    const folder = await createFolder({ title: "Work" });
+    const first = await createNotebook({ title: "First", folderId: folder.id });
+    const second = await createNotebook({ title: "Second", folderId: folder.id });
+    const third = await createNotebook({ title: "Third", folderId: folder.id });
+
+    expect((await getThreads()).map((thread) => thread.id)).toEqual([third.id, second.id, first.id]);
+
+    await moveThreadAfterThread(first.id, third.id);
+    expect((await getThreads()).map((thread) => thread.id)).toEqual([third.id, first.id, second.id]);
+
+    await moveThreadAfterThread(second.id, null);
+    expect((await getThreads()).map((thread) => thread.id)).toEqual([second.id, third.id, first.id]);
+  });
+
   it("deletes a notebook, its messages, and active save target setting", async () => {
     const notebook = await createNotebook({ title: "Scratch" });
     await setActiveSaveTargetThread(notebook.id);
@@ -374,6 +407,71 @@ describe("repository", () => {
     expect(await getThread(notebook.id)).toBeNull();
     expect(await getMessagesInOrder(notebook.id)).toEqual([]);
     expect(await getActiveSaveTargetThread()).toBeNull();
+  });
+
+  it("merges a full backup snapshot without deleting current notebooks", async () => {
+    const folder = await createFolder({ title: "Recovered" });
+    const notebook = await createNotebook({ title: "Backup source", folderId: folder.id });
+    const note = await appendMessage(notebook.id, messageInput("Saved note"));
+    const file = new File([new Uint8Array([1, 2, 3])], "diagram.png", { type: "image/png" });
+    const asset = await createImageAsset({ threadId: notebook.id, messageId: note.id, file, filename: "diagram.png" });
+    await setActiveSaveTargetThread(notebook.id);
+    const backup = await getNotebookBackupSnapshot();
+
+    await resetDatabaseForTests();
+    const existing = await createNotebook({ title: "Existing data" });
+    await mergeNotebookDataFromBackup({
+      app: "chatgpt-notes-sidebar",
+      backupVersion: 1,
+      exportedAt: new Date(Date.UTC(2026, 4, 22, 9, 30, 0)).toISOString(),
+      counts: {
+        folders: backup.folders.length,
+        threads: backup.threads.length,
+        messages: backup.messages.length,
+        settings: backup.settings.length,
+        aiOperationProposals: backup.aiOperationProposals.length,
+        assets: backup.assets.length,
+      },
+      ...backup,
+    });
+
+    expect((await getFolders()).map((item) => item.title)).toEqual(["Recovered"]);
+    expect((await getThreads()).map((thread) => thread.title)).toEqual(["Existing data", "Backup source"]);
+    expect(await getThread(existing.id)).toMatchObject({ title: "Existing data" });
+    expect((await getMessagesInOrder(notebook.id)).map((message) => message.contentMarkdown)).toEqual(["Saved note"]);
+    expect(await getActiveSaveTargetThread()).toMatchObject({ id: notebook.id });
+    expect(await getNotebookAsset(asset.id)).toMatchObject({ id: asset.id, byteSize: 3 });
+  });
+
+  it("merges backup messages into an existing source thread with a different local id", async () => {
+    const imported = await appendSavedMessageFromChatGpt(saveInput("imported", "from backup"));
+    const backup = await getNotebookBackupSnapshot();
+
+    await resetDatabaseForTests();
+    const current = await appendSavedMessageFromChatGpt(saveInput("current", "current note"));
+
+    await mergeNotebookDataFromBackup({
+      app: "chatgpt-notes-sidebar",
+      backupVersion: 1,
+      exportedAt: new Date(Date.UTC(2026, 4, 22, 9, 30, 0)).toISOString(),
+      counts: {
+        folders: backup.folders.length,
+        threads: backup.threads.length,
+        messages: backup.messages.length,
+        settings: backup.settings.length,
+        aiOperationProposals: backup.aiOperationProposals.length,
+        assets: backup.assets.length,
+      },
+      ...backup,
+    });
+
+    const threads = await getThreads();
+    const messages = await getMessagesInOrder(current.thread.id);
+
+    expect(threads).toHaveLength(1);
+    expect(threads[0].id).toBe(current.thread.id);
+    expect(messages.map((message) => message.contentText)).toEqual(["current note", "from backup"]);
+    expect(messages.every((message) => message.threadId === current.thread.id)).toBe(true);
   });
 });
 

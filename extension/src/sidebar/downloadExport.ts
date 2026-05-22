@@ -1,6 +1,10 @@
-import type { NotebookExportFile } from "../core/notebookExport";
+export type DownloadableFile = {
+  filename: string;
+  mimeType: string;
+  contents: string;
+};
 
-export function downloadNotebookExport(file: NotebookExportFile): void {
+export function downloadNotebookExport(file: DownloadableFile): void {
   const blob = new Blob([file.contents], { type: `${file.mimeType};charset=utf-8` });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");

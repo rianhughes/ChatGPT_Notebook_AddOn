@@ -48,6 +48,7 @@ type MarkdownBlock =
 
 type MarkdownContentProps = {
   markdown: string;
+  className?: string;
   collapseAllHeadings?: boolean;
   selectedHeadingIndex?: number | null;
   loadImageAssetUrl?(assetId: string): Promise<string | null>;
@@ -60,6 +61,7 @@ type MarkdownContentProps = {
 
 export function MarkdownContent({
   markdown,
+  className,
   collapseAllHeadings = false,
   selectedHeadingIndex = null,
   loadImageAssetUrl,
@@ -227,7 +229,7 @@ export function MarkdownContent({
   }
 
   return (
-    <div className="rendered-message">
+    <div className={className ? `rendered-message ${className}` : "rendered-message"}>
       {renderMarkdownBlocks(blocks, {
         loadImageAssetUrl,
         collapsedHeadingKeys,

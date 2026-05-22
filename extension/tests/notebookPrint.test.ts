@@ -46,6 +46,63 @@ describe("notebook print export", () => {
 
     expect(createNotebookPrintHtml(data)).toContain("<p>Plain text note</p>");
   });
+
+  it("renders Markdown pipe tables as printable HTML tables", () => {
+    const data = createNotebookExportData(
+      thread(),
+      [
+        message({
+          contentMarkdown: [
+            "Here's the query/read path in the same layout.",
+            "",
+            "| Box | Code location | Role in query path | Main calls / data moved |",
+            "| --- | --- | --- | --- |",
+            "| Client | external | Sends JSON-RPC request over HTTP or WebSocket. | Example: `starknet_getBlockWithTxs`, `starknet_syncing`, `starknet_call`. |",
+            "| Transport Layer | node/http.go | Binds URL paths to HTTP/WS handlers. | Routes `/`, `/rpc`, `/v0_10`, `/v0_9`, `/v0_8`, plus `/ws/...`. |",
+          ].join("\n"),
+        }),
+      ],
+    );
+
+    const html = createNotebookPrintHtml(data);
+
+    expect(html).toContain('<div class="notebook-print-table-wrap">');
+    expect(html).toContain("<table>");
+    expect(html).toContain("<th>Box</th>");
+    expect(html).toContain("<td>Transport Layer</td>");
+    expect(html).toContain("<code>starknet_getBlockWithTxs</code>");
+    expect(html).not.toContain("| Box | Code location |");
+  });
+
+  it("renders local source links with a readable label and separated path", () => {
+    const data = createNotebookExportData(
+      thread(),
+      [
+        message({
+          contentMarkdown:
+            "[node/http.go](/home/rian/Desktop/DistributedComputingEtc/juno/node/http.go:100) binds URL paths.",
+        }),
+      ],
+    );
+
+    const html = createNotebookPrintHtml(data);
+
+    expect(html).toContain('<span class="notebook-print-source-link">');
+    expect(html).toContain('<span class="notebook-print-source-link-label">node/http.go</span>');
+    expect(html).toContain(
+      '<span class="notebook-print-source-link-path">/home/rian/Desktop/DistributedComputingEtc/juno/node/http.go:100</span>',
+    );
+    expect(html).not.toContain("[node/http.go](");
+  });
+
+  it("keeps unsafe markdown links as plain labels in print output", () => {
+    const data = createNotebookExportData(thread(), [message({ contentMarkdown: "[click me](javascript:evil)" })]);
+
+    const html = createNotebookPrintHtml(data);
+
+    expect(html).toContain("<p>click me</p>");
+    expect(html).not.toContain("javascript:evil");
+  });
 });
 
 function thread(input: Partial<ChatGptThread> = {}): ChatGptThread {

@@ -24,6 +24,11 @@ import { getMessageCopyText } from "../core/clipboard";
 import { contentHashFromParts, createId } from "../core/hash";
 import type { AiNotebookOperation, AiOperationProposal, ChatGptThread, NotebookFolder, SavedMessage } from "../core/models";
 import {
+  createNotebookBackupData,
+  createNotebookBackupFile,
+  parseNotebookImportFile,
+} from "../core/notebookBackup";
+import {
   convertSelectedTextToHeadingInMarkdown,
   deleteHeadingSectionFromMarkdown,
   extractHeadingSectionFromMarkdown,
@@ -51,12 +56,15 @@ import {
   getFolders,
   getAiOperationProposals,
   getAssetsForThread,
+  getNotebookBackupSnapshot,
   getMessagesInOrder,
   getNotebookAsset,
   getThreadBySource,
   getThreads,
   mergeMessages,
+  mergeNotebookDataFromBackup,
   moveMessageAfterMessage,
+  moveThreadAfterThread,
   moveThreadToFolder,
   renameFolder,
   renameThreadTitle,
@@ -115,6 +123,7 @@ function App() {
   const [messageUndoHistory, setMessageUndoHistory] = useState<Record<string, string[]>>({});
   const [notebookUndoHistory, setNotebookUndoHistory] = useState<Record<string, NotebookSnapshot[]>>({});
   const [lastDeletedMessage, setLastDeletedMessage] = useState<SavedMessage | null>(null);
+  const [pendingEditMessageId, setPendingEditMessageId] = useState<string | null>(null);
   const [isMergingMessages, setIsMergingMessages] = useState(false);
   const [selectedMergeMessageIds, setSelectedMergeMessageIds] = useState<Set<string>>(() => new Set());
   const [collapsedMessageIds, setCollapsedMessageIds] = useState<Set<string>>(() => new Set());
@@ -212,7 +221,10 @@ function App() {
         });
 
         if (activeContext) {
-          const activeThread = await getThreadBySource(activeContext.sourceThreadId);
+          const activeThread = await getThreadBySource(
+            activeContext.sourceThreadId,
+            activeContext.source === "deepwiki" ? "deepwiki" : "chatgpt",
+          );
 
           if (activeThread) {
             setSelectedThreadId(activeThread.id);
@@ -338,10 +350,9 @@ function App() {
     }
 
     setError("");
-    const notebook = await createNotebook({ title });
+    await createNotebook({ title });
     setNewNotebookTitle("");
     await loadThreads();
-    await selectThread(notebook.id);
     setStatus("Notebook created");
   }
 
@@ -417,6 +428,19 @@ function App() {
     }
   }
 
+  async function moveThreadAfter(thread: ChatGptThread, afterThreadId: string | null) {
+    setError("");
+    setStatus("");
+
+    try {
+      await moveThreadAfterThread(thread.id, afterThreadId);
+      await loadThreads();
+      setStatus("Moved notebook");
+    } catch {
+      setError("Could not reorder notebooks.");
+    }
+  }
+
   async function updateFolderTitle(folderId: string, title: string) {
     setError("");
     setStatus("");
@@ -470,6 +494,52 @@ function App() {
       setStatus(`Exported ${selectedThread.title} as ${file.format.label}`);
     } catch {
       setError("Could not export notebook.");
+    }
+  }
+
+  async function exportFullBackup() {
+    setError("");
+    setStatus("");
+
+    try {
+      const backupData = await createNotebookBackupData(await getNotebookBackupSnapshot());
+      const file = createNotebookBackupFile(backupData);
+
+      downloadNotebookExport(file);
+      setStatus(`Exported backup with ${backupData.counts.threads} notebooks`);
+    } catch {
+      setError("Could not export backup.");
+    }
+  }
+
+  async function importFullBackup(file: File) {
+    setError("");
+    setStatus("");
+
+    const confirmed = window.confirm(
+      "Import this backup and merge it into the current notebooks, folders, notes, settings, pending ChatGPT changes, and images?",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const backupData = await parseNotebookImportFile(file);
+      const result = await mergeNotebookDataFromBackup(backupData);
+      resetCollapsedMessages();
+      setMessageUndoHistory({});
+      setNotebookUndoHistory({});
+      setLastDeletedMessage(null);
+      setIsMergingMessages(false);
+      setSelectedMergeMessageIds(new Set());
+      setSelectedThreadId(null);
+      setIsNotebookOpen(false);
+      await loadMessages(null);
+      await Promise.all([loadThreads(), loadFolders(), loadAiOperationProposals()]);
+      setStatus(`Merged backup with ${result.threads} notebooks`);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not import backup.");
     }
   }
 
@@ -627,7 +697,20 @@ function App() {
 
       pushNotebookUndoSnapshot(undoSnapshot);
       setMessageQuery("");
-      setCollapsedMessageIds((current) => new Set(current).add(createdMessage.id));
+      setCollapsedMessageIds((current) => {
+        if (!current.has(createdMessage.id)) {
+          return current;
+        }
+
+        const next = new Set(current);
+        next.delete(createdMessage.id);
+        return next;
+      });
+      setPendingEditMessageId(createdMessage.id);
+      knownDefaultCollapsedMessageIdsRef.current = new Set([
+        ...knownDefaultCollapsedMessageIdsRef.current,
+        createdMessage.id,
+      ]);
       setStatus("Created note");
       await loadMessages(selectedThread.id);
       await loadThreads();
@@ -1321,12 +1404,15 @@ function App() {
             ) : null}
             <MessageList
               messages={visibleMessages}
+              threadSource={selectedThread?.source}
               undoableMessageIds={undoableMessageIds}
               canUndoDeletedMessage={canUndoDeletedMessage}
               selectedMessageIds={selectedMergeMessageIds}
+              autoEditMessageId={pendingEditMessageId}
               isSelectingForMerge={isMergingMessages}
               collapsedMessageIds={collapsedMessageIds}
               canReorderMessages={messages.length > 1 && !messageQuery.trim() && !isMergingMessages}
+              onAutoEditMessageHandled={() => setPendingEditMessageId(null)}
               onCollapsedMessageIdsChange={setCollapsedMessageIds}
               onToggleMessageSelection={toggleMergeMessageSelection}
               onMoveMessageAfter={(message, afterMessageId) => void moveMessageAfter(message, afterMessageId)}
@@ -1375,8 +1461,11 @@ function App() {
             onRenameThread={(threadId, title) => void updateSelectedThreadTitle(threadId, title)}
             onRenameFolder={(folderId, title) => void updateFolderTitle(folderId, title)}
             onMoveThreadToFolder={(thread, folderId) => void moveThreadFolder(thread, folderId)}
+            onMoveThreadAfter={(thread, afterThreadId) => void moveThreadAfter(thread, afterThreadId)}
             onDeleteThread={(thread) => void removeThread(thread)}
             onDeleteFolder={(folder) => void removeFolder(folder)}
+            onExportBackup={() => void exportFullBackup()}
+            onImportBackup={(file) => void importFullBackup(file)}
           />
           {pendingAiOperationProposal ? (
             <AiOperationProposalReview

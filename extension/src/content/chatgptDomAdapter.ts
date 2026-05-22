@@ -1,6 +1,7 @@
 import { contentHashFromParts, sourceMessageKeyFromParts } from "../core/hash";
 import type { MessageRole, SaveChatGptMessageInput } from "../core/models";
 import { isChatGptUrl, parseChatGptConversationId } from "../core/threadIdentity";
+import type { MessageCaptureAdapter } from "./sourceAdapter";
 import {
   extractMarkdownFromNode,
   extractMarkdownFromRange,
@@ -21,6 +22,7 @@ export type ChatGptExtractedMessage = SaveChatGptMessageInput & {
 };
 
 export function getCurrentChatGptConversation(): {
+  source: "chatgpt";
   sourceThreadId: string;
   title: string;
   url: string;
@@ -32,6 +34,7 @@ export function getCurrentChatGptConversation(): {
   }
 
   return {
+    source: "chatgpt",
     sourceThreadId,
     title: document.title.replace(/\s*-\s*ChatGPT\s*$/i, "").trim() || "ChatGPT conversation",
     url: window.location.href,
@@ -161,6 +164,7 @@ function buildExtractedMessage(
     captureMode === "selection" ? `selection:${baseSourceMessageKey}:${contentHash}` : baseSourceMessageKey;
 
   return {
+    source: "chatgpt",
     container,
     sourceThreadId: context.sourceThreadId,
     title: context.title,
@@ -173,6 +177,20 @@ function buildExtractedMessage(
     isStreaming: isMessageStreaming(container),
   };
 }
+
+export const chatGptCaptureAdapter: MessageCaptureAdapter = {
+  source: "chatgpt",
+  labels: {
+    exportMessage: "Export to ChatGPT Note",
+    exportSelection: "Export selected text to ChatGPT Notes",
+  },
+  supportsAiOperations: true,
+  getCurrentContext: getCurrentChatGptConversation,
+  findConversationRoot,
+  findVisibleMessageContainers,
+  extractMessageFromContainer,
+  extractSelectionFromDocument,
+};
 
 function getMessageRole(container: HTMLElement): Extract<MessageRole, "assistant" | "user" | "system"> | null {
   const roleElement = container.matches("[data-message-author-role]")

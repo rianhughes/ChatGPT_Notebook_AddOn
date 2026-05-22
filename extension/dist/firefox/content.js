@@ -997,7 +997,7 @@
     }
     switch (value.type) {
       case "CHATGPT_THREAD_CHANGED":
-        return typeof value.payload.sourceThreadId === "string" && typeof value.payload.title === "string" && typeof value.payload.url === "string";
+        return isOptionalCapturableSource(value.payload.source) && typeof value.payload.sourceThreadId === "string" && typeof value.payload.title === "string" && typeof value.payload.url === "string";
       case "SAVE_CHATGPT_MESSAGE":
         return isSaveChatGptPayload(value.payload);
       case "SAVE_CHATGPT_MESSAGE_RESULT":
@@ -1009,7 +1009,7 @@
       case "SET_ACTIVE_SAVE_TARGET":
         return typeof value.payload.threadId === "string" || value.payload.threadId === null;
       case "ACTIVE_SAVE_TARGET_CHANGED":
-        return (typeof value.payload.threadId === "string" || value.payload.threadId === null) && (typeof value.payload.title === "string" || value.payload.title === null) && (value.payload.source === "chatgpt" || value.payload.source === "notebook" || value.payload.source === null);
+        return (typeof value.payload.threadId === "string" || value.payload.threadId === null) && (typeof value.payload.title === "string" || value.payload.title === null) && (value.payload.source === "chatgpt" || value.payload.source === "deepwiki" || value.payload.source === "notebook" || value.payload.source === null);
       case "OPEN_SIDEBAR_WINDOW":
         return true;
       case "INSERT_TEXT_IN_CHATGPT":
@@ -1019,16 +1019,19 @@
       case "SOURCE_MESSAGE_SAVED_STATE_CHANGED":
         return typeof value.payload.sourceThreadId === "string" && typeof value.payload.sourceMessageKey === "string" && typeof value.payload.saved === "boolean";
       case "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES":
-        return typeof value.payload.sourceThreadId === "string" && Array.isArray(value.payload.sourceMessageKeys) && value.payload.sourceMessageKeys.every((key) => typeof key === "string");
+        return isOptionalCapturableSource(value.payload.source) && typeof value.payload.sourceThreadId === "string" && Array.isArray(value.payload.sourceMessageKeys) && value.payload.sourceMessageKeys.every((key) => typeof key === "string");
       default:
         return false;
     }
   }
   function isSaveChatGptPayload(value) {
-    return typeof value.sourceThreadId === "string" && typeof value.title === "string" && (typeof value.sourceMessageId === "string" || value.sourceMessageId === null) && typeof value.sourceMessageKey === "string" && typeof value.contentHash === "string" && isMessageRole(value.role) && typeof value.contentMarkdown === "string" && typeof value.contentText === "string" && (value.insertAfterId === void 0 || value.insertAfterId === null || typeof value.insertAfterId === "string");
+    return isOptionalCapturableSource(value.source) && typeof value.sourceThreadId === "string" && typeof value.title === "string" && (typeof value.sourceMessageId === "string" || value.sourceMessageId === null) && typeof value.sourceMessageKey === "string" && typeof value.contentHash === "string" && isMessageRole(value.role) && typeof value.contentMarkdown === "string" && typeof value.contentText === "string" && (value.insertAfterId === void 0 || value.insertAfterId === null || typeof value.insertAfterId === "string");
   }
   function isMessageRole(value) {
     return value === "assistant" || value === "user" || value === "system";
+  }
+  function isOptionalCapturableSource(value) {
+    return value === void 0 || value === "chatgpt" || value === "deepwiki";
   }
   function isSaveStatus(value) {
     return value === "created" || value === "already_saved" || value === "updated";
@@ -1154,6 +1157,7 @@ ${normalizeForKey(input.contentText)}`);
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
   }
   const CHATGPT_HOSTS = /* @__PURE__ */ new Set(["chatgpt.com", "chat.openai.com"]);
+  const DEEPWIKI_HOSTS = /* @__PURE__ */ new Set(["deepwiki.com", "www.deepwiki.com"]);
   function parseChatGptConversationId(input) {
     const url = typeof input === "string" ? safeUrl(input) : input;
     if (!url || !isChatGptUrl(url)) {
@@ -1168,6 +1172,45 @@ ${normalizeForKey(input.contentText)}`);
   function isChatGptUrl(input) {
     const url = typeof input === "string" ? safeUrl(input) : input;
     return Boolean(url && CHATGPT_HOSTS.has(url.hostname));
+  }
+  function parseDeepWikiPageIdentity(input) {
+    const url = typeof input === "string" ? safeUrl(input) : input;
+    if (!url || !isDeepWikiUrl(url)) {
+      return null;
+    }
+    const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    if (segments.length === 0) {
+      return null;
+    }
+    if (segments[0] === "search") {
+      const searchId = segments[1] || "search";
+      return {
+        sourceThreadId: `deepwiki:search:${searchId}`,
+        route: segments.slice(1).join("/") || "search",
+        fallbackTitle: titleFromSlug(searchId) || "DeepWiki search"
+      };
+    }
+    if (segments[0].startsWith("_") || segments[0] === "api") {
+      return null;
+    }
+    const [owner, repo, ...routeParts] = segments;
+    if (!owner || !repo) {
+      return null;
+    }
+    return {
+      sourceThreadId: `deepwiki:${owner}/${repo}`,
+      owner,
+      repo,
+      route: routeParts.join("/") || "overview",
+      fallbackTitle: `${owner}/${repo} DeepWiki`
+    };
+  }
+  function isDeepWikiUrl(input) {
+    const url = typeof input === "string" ? safeUrl(input) : input;
+    return Boolean(url && DEEPWIKI_HOSTS.has(url.hostname));
+  }
+  function titleFromSlug(slug) {
+    return slug.replace(/_[0-9a-f-]{20,}$/i, "").replace(/[-_]+/g, " ").trim().replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
   function safeUrl(input) {
     try {
@@ -1473,6 +1516,7 @@ ${fence}`;
       return null;
     }
     return {
+      source: "chatgpt",
       sourceThreadId,
       title: document.title.replace(/\s*-\s*ChatGPT\s*$/i, "").trim() || "ChatGPT conversation",
       url: window.location.href
@@ -1498,25 +1542,25 @@ ${fence}`;
   function createTemporaryThreadSuffix() {
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
-  function findConversationRoot() {
+  function findConversationRoot$1() {
     return document.querySelector("main") ?? document.body;
   }
-  function findVisibleMessageContainers(root = document) {
+  function findVisibleMessageContainers$1(root = document) {
     const containers = MESSAGE_CONTAINER_SELECTORS.flatMap(
       (selector) => Array.from(root.querySelectorAll(selector))
     ).map(resolveMessageContainer).filter((container) => Boolean(container));
     const uniqueContainers = [...new Set(containers)];
     return uniqueContainers.filter((container) => {
-      if (!isVisibleEnough(container)) {
+      if (!isVisibleEnough$1(container)) {
         return false;
       }
       return Boolean(getMessageRole(container));
     });
   }
-  function extractMessageFromContainer(container) {
-    return buildExtractedMessage(container, extractMessageMarkdown(container), "message");
+  function extractMessageFromContainer$1(container) {
+    return buildExtractedMessage$1(container, extractMessageMarkdown(container), "message");
   }
-  function extractSelectionFromDocument(selection) {
+  function extractSelectionFromDocument$1(selection) {
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
       return null;
     }
@@ -1526,7 +1570,7 @@ ${fence}`;
       return null;
     }
     const contentMarkdown = extractMarkdownFromRange(range);
-    return buildExtractedMessage(container, contentMarkdown, "selection");
+    return buildExtractedMessage$1(container, contentMarkdown, "selection");
   }
   function findMessageContainerForNode(node) {
     const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
@@ -1549,13 +1593,13 @@ ${fence}`;
       (element) => Boolean(getOwnMessageRole(element))
     ) ?? null;
   }
-  function buildExtractedMessage(container, contentMarkdown, captureMode) {
+  function buildExtractedMessage$1(container, contentMarkdown, captureMode) {
     const context = getCurrentChatGptConversation();
     const role = getMessageRole(container);
     if (!context || !role) {
       return null;
     }
-    const sourceMessageId = getSourceMessageId(container);
+    const sourceMessageId = getSourceMessageId$1(container);
     const contentText = markdownToPlainText(contentMarkdown);
     if (!contentText) {
       return null;
@@ -1568,6 +1612,7 @@ ${fence}`;
     const contentHash = contentHashFromParts({ contentMarkdown, contentText });
     const sourceMessageKey = captureMode === "selection" ? `selection:${baseSourceMessageKey}:${contentHash}` : baseSourceMessageKey;
     return {
+      source: "chatgpt",
       container,
       sourceThreadId: context.sourceThreadId,
       title: context.title,
@@ -1580,6 +1625,19 @@ ${fence}`;
       isStreaming: isMessageStreaming(container)
     };
   }
+  const chatGptCaptureAdapter = {
+    source: "chatgpt",
+    labels: {
+      exportMessage: "Export to ChatGPT Note",
+      exportSelection: "Export selected text to ChatGPT Notes"
+    },
+    supportsAiOperations: true,
+    getCurrentContext: getCurrentChatGptConversation,
+    findConversationRoot: findConversationRoot$1,
+    findVisibleMessageContainers: findVisibleMessageContainers$1,
+    extractMessageFromContainer: extractMessageFromContainer$1,
+    extractSelectionFromDocument: extractSelectionFromDocument$1
+  };
   function getMessageRole(container) {
     const roleElement = container.matches("[data-message-author-role]") ? container : container.querySelector("[data-message-author-role]");
     return roleElement ? getOwnMessageRole(roleElement) : null;
@@ -1591,7 +1649,7 @@ ${fence}`;
     }
     return null;
   }
-  function getSourceMessageId(container) {
+  function getSourceMessageId$1(container) {
     const idElement = findSelfOrDescendantWithAttribute(container, "data-message-id") ?? findSelfOrDescendantWithAttribute(container, "data-turn-id") ?? findSelfOrDescendantWithAttribute(container, "data-testid");
     const rawId = (idElement == null ? void 0 : idElement.getAttribute("data-message-id")) ?? (idElement == null ? void 0 : idElement.getAttribute("data-turn-id")) ?? (idElement == null ? void 0 : idElement.getAttribute("data-testid")) ?? container.id;
     return rawId || null;
@@ -1615,8 +1673,346 @@ ${fence}`;
     }
     return container.querySelector(`[${attributeName}]`);
   }
-  function isVisibleEnough(container) {
+  function isVisibleEnough$1(container) {
     const style = window.getComputedStyle(container);
+    return style.display !== "none" && style.visibility !== "hidden";
+  }
+  const CONTENT_SELECTORS = [
+    ".prose-custom",
+    ".prose",
+    "article",
+    "[role='main']",
+    "main"
+  ];
+  const HEADING_SELECTOR = "h1, h2, h3, [data-header='true']";
+  const SEARCH_SECTION_HEADING_PATTERN = /^(read path|notes|answer|response|overview)$/i;
+  const OVERLAY_SELECTORS = ".cgpt-notes-capture, .cgpt-notes-selection-popover";
+  const SOURCE_REFERENCE_PATTERN = /^(?:[\w@.-]+\/)*[\w@.-]+\.[A-Za-z0-9]+:\d+(?:-\d+)?$/;
+  const deepWikiCaptureAdapter = {
+    source: "deepwiki",
+    labels: {
+      exportMessage: "Export to ChatGPT Note",
+      exportSelection: "Export selected text to ChatGPT Notes"
+    },
+    getCurrentContext: getCurrentDeepWikiContext,
+    findConversationRoot,
+    findVisibleMessageContainers,
+    extractMessageFromContainer,
+    extractSelectionFromDocument
+  };
+  function getCurrentDeepWikiContext() {
+    const identity = parseDeepWikiPageIdentity(window.location.href);
+    if (!identity) {
+      return null;
+    }
+    return {
+      source: "deepwiki",
+      sourceThreadId: identity.sourceThreadId,
+      title: getDeepWikiTitle(identity.fallbackTitle),
+      url: window.location.href
+    };
+  }
+  function findConversationRoot() {
+    return document.body;
+  }
+  function findVisibleMessageContainers(root = document) {
+    const contentRoot = findContentRoot(root);
+    if (!contentRoot || !isVisibleEnough(contentRoot)) {
+      return [];
+    }
+    const headings = Array.from(contentRoot.querySelectorAll(HEADING_SELECTOR)).filter((heading) => {
+      var _a;
+      return isVisibleEnough(heading) && Boolean((_a = heading.textContent) == null ? void 0 : _a.trim());
+    }).filter((heading) => isLikelyContentHeading(heading, contentRoot)).filter((heading, index, headings2) => headings2.findIndex((candidate) => candidate === heading) === index);
+    if (window.location.pathname.startsWith("/search/")) {
+      return [contentRoot, ...headings.filter((heading) => heading !== contentRoot)];
+    }
+    if (headings.length > 0) {
+      return headings;
+    }
+    return [contentRoot];
+  }
+  function extractMessageFromContainer(container) {
+    return buildExtractedMessage(container, extractSectionMarkdown(container), "message");
+  }
+  function extractSelectionFromDocument(selection) {
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return null;
+    }
+    const range = selection.getRangeAt(0);
+    const contentRoot = findSelectionContentRoot(range) ?? findContentRoot();
+    if (!contentRoot || !contentRoot.contains(range.commonAncestorContainer)) {
+      return null;
+    }
+    const container = findSectionContainerForNode(range.commonAncestorContainer, contentRoot) ?? contentRoot;
+    if (!contentRoot.contains(range.startContainer) || !contentRoot.contains(range.endContainer)) {
+      return null;
+    }
+    return buildExtractedMessage(container, extractSelectionMarkdown(range), "selection");
+  }
+  function buildExtractedMessage(container, contentMarkdown, captureMode) {
+    const context = getCurrentDeepWikiContext();
+    const contentText = markdownToPlainText(contentMarkdown);
+    if (!context || !contentText) {
+      return null;
+    }
+    const sourceMessageId = getSourceMessageId(container);
+    const baseSourceMessageKey = sourceMessageKeyFromParts({
+      sourceMessageId,
+      role: "assistant",
+      contentText
+    });
+    const contentHash = contentHashFromParts({ contentMarkdown, contentText });
+    const sourceMessageKey = captureMode === "selection" ? `selection:${baseSourceMessageKey}:${contentHash}` : baseSourceMessageKey;
+    return {
+      source: "deepwiki",
+      container,
+      sourceThreadId: context.sourceThreadId,
+      title: context.title,
+      sourceMessageId,
+      sourceMessageKey,
+      contentHash,
+      role: "assistant",
+      contentMarkdown,
+      contentText,
+      isStreaming: false
+    };
+  }
+  function findContentRoot(root = document) {
+    const searchAnswerRoot = findSearchAnswerRoot(root);
+    if (searchAnswerRoot) {
+      return searchAnswerRoot;
+    }
+    let bestCandidate = null;
+    let bestScore = 0;
+    for (const selector of CONTENT_SELECTORS) {
+      const candidates = Array.from(root.querySelectorAll(selector));
+      for (const candidate of candidates) {
+        const score = scoreContentRootCandidate(candidate);
+        if (score > bestScore) {
+          bestCandidate = candidate;
+          bestScore = score;
+        }
+      }
+    }
+    return bestCandidate ?? (hasMeaningfulText(document.body) ? document.body : null);
+  }
+  function findSearchAnswerRoot(root) {
+    if (!window.location.pathname.startsWith("/search/")) {
+      return null;
+    }
+    const headings = Array.from(root.querySelectorAll("h1, h2, h3")).filter((heading) => isVisibleEnough(heading)).filter((heading) => SEARCH_SECTION_HEADING_PATTERN.test(getNormalizedElementText(heading)));
+    if (headings.length === 0) {
+      return null;
+    }
+    const firstHeading = headings[0];
+    const contentAncestor = findReadableAncestor(firstHeading);
+    if (contentAncestor) {
+      return contentAncestor;
+    }
+    return firstHeading.parentElement;
+  }
+  function findReadableAncestor(element) {
+    let current = element.parentElement;
+    while (current && current !== document.body) {
+      const text = getNormalizedElementText(current);
+      const hasReadableBlocks = current.querySelectorAll("p, li, pre, table, h1, h2, h3").length >= 2;
+      const hasControls = current.querySelectorAll("textarea, input, button").length > 0;
+      if (text.length > 80 && hasReadableBlocks && !hasControls) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }
+  function scoreContentRootCandidate(element) {
+    if (!isVisibleEnough(element) || !hasMeaningfulText(element)) {
+      return 0;
+    }
+    const textLength = Math.min(getNormalizedElementText(element).length, 5e3);
+    const readableBlockCount = element.querySelectorAll("p, li, pre, table, h1, h2, h3").length;
+    const formControlCount = element.querySelectorAll("textarea, input, button").length;
+    const navigationPenalty = element.matches("nav, header, footer, aside") ? 2e3 : 0;
+    return textLength + readableBlockCount * 80 - formControlCount * 120 - navigationPenalty;
+  }
+  function isLikelyContentHeading(heading, contentRoot) {
+    if (contentRoot === document.body && heading.closest("nav, header, footer, aside")) {
+      return false;
+    }
+    if (!window.location.pathname.startsWith("/search/")) {
+      return true;
+    }
+    return SEARCH_SECTION_HEADING_PATTERN.test(getNormalizedElementText(heading));
+  }
+  function findSelectionContentRoot(range) {
+    const element = getElementForNode(range.commonAncestorContainer);
+    let current = element;
+    while (current && current !== document.body) {
+      if (isUsableSelectionRoot(current) && current.contains(range.startContainer) && current.contains(range.endContainer)) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return document.body.contains(range.startContainer) && document.body.contains(range.endContainer) ? document.body : null;
+  }
+  function isUsableSelectionRoot(element) {
+    if (!isVisibleEnough(element) || !hasMeaningfulText(element)) {
+      return false;
+    }
+    if (element.matches("script, style, textarea, input, button, form, nav, header, footer, aside")) {
+      return false;
+    }
+    return true;
+  }
+  function findSectionContainerForNode(node, contentRoot = findContentRoot()) {
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    if (!contentRoot || !element || !contentRoot.contains(element)) {
+      return null;
+    }
+    const ownHeading = element.closest(HEADING_SELECTOR);
+    if (ownHeading && contentRoot.contains(ownHeading)) {
+      return ownHeading;
+    }
+    let current = element;
+    while (current && current !== contentRoot) {
+      let sibling = current.previousElementSibling;
+      while (sibling) {
+        if (sibling instanceof HTMLElement && matchesHeading(sibling)) {
+          return sibling;
+        }
+        const nestedHeadings = Array.from(sibling.querySelectorAll(HEADING_SELECTOR));
+        const nestedHeading = nestedHeadings.reverse().find((heading) => isVisibleEnough(heading));
+        if (nestedHeading) {
+          return nestedHeading;
+        }
+        sibling = sibling.previousElementSibling;
+      }
+      current = current.parentElement;
+    }
+    return null;
+  }
+  function extractSectionMarkdown(container) {
+    var _a;
+    const fragment = document.createDocumentFragment();
+    if (matchesHeading(container)) {
+      collectHeadingSection(container).forEach((node) => {
+        fragment.append(node.cloneNode(true));
+      });
+    } else {
+      fragment.append(container.cloneNode(true));
+    }
+    (_a = fragment.querySelectorAll) == null ? void 0 : _a.call(fragment, OVERLAY_SELECTORS).forEach((element) => element.remove());
+    moveDeepWikiSourceReferencesOutOfProse(fragment);
+    return cleanDeepWikiMarkdown(extractMarkdownFromNode(fragment));
+  }
+  function extractSelectionMarkdown(range) {
+    const fragment = range.cloneContents();
+    moveDeepWikiSourceReferencesOutOfProse(fragment);
+    return cleanDeepWikiMarkdown(extractMarkdownFromNode(fragment));
+  }
+  function moveDeepWikiSourceReferencesOutOfProse(root) {
+    var _a;
+    (_a = root.querySelectorAll) == null ? void 0 : _a.call(root, "p, li").forEach((block) => {
+      if (!(block instanceof HTMLElement)) {
+        return;
+      }
+      const references = [];
+      block.querySelectorAll("a").forEach((link) => {
+        const label = getNormalizedElementText(link);
+        if (!SOURCE_REFERENCE_PATTERN.test(label)) {
+          return;
+        }
+        references.push(label);
+        link.remove();
+      });
+      if (references.length === 0) {
+        return;
+      }
+      appendSourceReferenceBlock(block, references);
+    });
+  }
+  function appendSourceReferenceBlock(block, references) {
+    const sources = document.createElement(block.tagName === "LI" ? "div" : "p");
+    const label = document.createElement("strong");
+    const uniqueReferences = [...new Set(references)];
+    label.textContent = "Sources:";
+    sources.append(label, document.createTextNode(` ${uniqueReferences.join(", ")}`));
+    if (block.tagName === "LI") {
+      block.append(sources);
+      return;
+    }
+    block.after(sources);
+  }
+  function cleanDeepWikiMarkdown(markdown) {
+    return markdown.split(/(```[\s\S]*?```)/g).map((part) => part.startsWith("```") ? part : cleanDeepWikiMarkdownText(part)).join("").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  function cleanDeepWikiMarkdownText(markdown) {
+    return markdown.replace(/[ \t]*\n[ \t]*([.,;:!?])/g, "$1").replace(/([^\n])\n(?!\n|#{1,6}\s|- |\d+\. |> |\|)/g, "$1 ").replace(/(\S)[ \t]{2,}(\S)/g, "$1 $2").replace(/[ \t]+([.,;:!?])/g, "$1");
+  }
+  function collectHeadingSection(heading) {
+    const level = getHeadingLevel(heading);
+    const nodes = [heading];
+    let sibling = heading.nextElementSibling;
+    while (sibling instanceof HTMLElement) {
+      if (matchesHeading(sibling) && getHeadingLevel(sibling) <= level) {
+        break;
+      }
+      nodes.push(sibling);
+      sibling = sibling.nextElementSibling;
+    }
+    return nodes;
+  }
+  function getSourceMessageId(container) {
+    const identity = parseDeepWikiPageIdentity(window.location.href);
+    if (!identity) {
+      return null;
+    }
+    const route = identity.route || "overview";
+    const headingId = getHeadingId(container);
+    return headingId ? `${identity.sourceThreadId}:${route}#${headingId}` : `${identity.sourceThreadId}:${route}`;
+  }
+  function getHeadingId(container) {
+    const rawId = container.id || container.textContent;
+    const value = rawId == null ? void 0 : rawId.trim();
+    if (!value || value === "true") {
+      return null;
+    }
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  }
+  function getDeepWikiTitle(fallbackTitle) {
+    var _a, _b;
+    const heading = (_a = findContentRoot()) == null ? void 0 : _a.querySelector("h1, h2");
+    const headingText = (_b = heading == null ? void 0 : heading.textContent) == null ? void 0 : _b.trim();
+    const documentTitle = document.title.replace(/\s*\|\s*DeepWiki\s*$/i, "").trim();
+    return headingText || documentTitle || fallbackTitle;
+  }
+  function matchesHeading(element) {
+    return element.matches(HEADING_SELECTOR);
+  }
+  function getHeadingLevel(element) {
+    if (/^H[1-6]$/.test(element.tagName)) {
+      return Number(element.tagName.slice(1));
+    }
+    return 2;
+  }
+  function hasMeaningfulText(element) {
+    return Boolean(getNormalizedElementText(element));
+  }
+  function getElementForNode(node) {
+    if (node instanceof HTMLElement) {
+      return node;
+    }
+    return node.parentElement;
+  }
+  function getNormalizedElementText(element) {
+    var _a;
+    return ((_a = element.textContent) == null ? void 0 : _a.replace(/\s+/g, " ").trim()) ?? "";
+  }
+  function isVisibleEnough(element) {
+    if (element.closest("[hidden], [aria-hidden='true']")) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
     return style.display !== "none" && style.visibility !== "hidden";
   }
   const AI_OPERATIONS_BLOCK_LANGUAGE = "cgpt-notes-ops";
@@ -1771,11 +2167,10 @@ ${fence}`;
   const BUTTON_ICON_CLASS = "cgpt-notes-save-button-icon";
   const AI_OPS_BUTTON_CLASS = "cgpt-notes-ai-ops-button";
   const SELECTION_POPOVER_CLASS = "cgpt-notes-selection-popover";
-  const EXPORT_LABEL = "Export to ChatGPT Note";
   const AI_OPS_LABEL = "Review note changes";
-  function startMessageCaptureOverlay() {
-    const root = findConversationRoot();
-    const selectionButton = createSelectionButton();
+  function startMessageCaptureOverlay(adapter) {
+    const root = adapter.findConversationRoot();
+    const selectionButton = createSelectionButton(adapter);
     let refreshHandle = null;
     let selectionHandle = null;
     let stopped = false;
@@ -1832,17 +2227,17 @@ ${fence}`;
       }
       selectionHandle = window.setTimeout(() => {
         selectionHandle = null;
-        updateSelectionButton(selectionButton);
+        updateSelectionButton(selectionButton, adapter);
       }, 80);
     }
     function scan() {
       if (stopped) {
         return;
       }
-      const containers = findVisibleMessageContainers(root);
+      const containers = adapter.findVisibleMessageContainers(root);
       containers.forEach((container) => {
-        if (!container.hasAttribute(BOUND_ATTRIBUTE) || !getMessageButton(container) || hasAiOperationPackage(container) && !getAiOperationsButton(container)) {
-          attachButton(container);
+        if (!container.hasAttribute(BOUND_ATTRIBUTE) || !getMessageButton(container) || hasAiOperationPackage(container, adapter) && !getAiOperationsButton(container)) {
+          attachButton(container, adapter);
         }
       });
     }
@@ -1862,60 +2257,60 @@ ${fence}`;
         return;
       }
       if (action === "export-selection") {
-        void saveSelectedMessage(button);
+        void saveSelectedMessage(button, adapter);
         return;
       }
       const container = button.closest(`[${BOUND_ATTRIBUTE}]`);
       if (!container) {
-        setButtonError(button);
+        setButtonError(button, adapter);
         return;
       }
       if (action === "review-ai-ops") {
-        void reviewAiOperations(container, button);
+        void reviewAiOperations(container, button, adapter);
         return;
       }
-      void saveContainerMessage(container, button);
+      void saveContainerMessage(container, button, adapter);
     }
   }
-  function createSelectionButton() {
+  function createSelectionButton(adapter) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `${BUTTON_CLASS} ${SELECTION_POPOVER_CLASS}`;
-    setButtonContent(button);
-    button.title = "Export selected text to ChatGPT Notes";
-    button.setAttribute("aria-label", "Export selected text to ChatGPT Notes");
+    setButtonContent(button, adapter);
+    button.title = adapter.labels.exportSelection;
+    button.setAttribute("aria-label", adapter.labels.exportSelection);
     button.setAttribute(ACTION_ATTRIBUTE, "export-selection");
     button.addEventListener("mousedown", (event) => {
       event.preventDefault();
     });
     document.body.append(button);
-    hideSelectionButton(button);
+    hideSelectionButton(button, adapter);
     return button;
   }
-  function attachButton(container) {
+  function attachButton(container, adapter) {
     container.querySelectorAll(`.${OVERLAY_CLASS}`).forEach((element) => element.remove());
     const wrapper = document.createElement("span");
     const button = document.createElement("button");
     wrapper.className = OVERLAY_CLASS;
     button.type = "button";
     button.className = BUTTON_CLASS;
-    setButtonContent(button);
-    button.title = "Export message to ChatGPT Notes";
-    button.setAttribute("aria-label", "Export message to ChatGPT Notes");
+    setButtonContent(button, adapter);
+    button.title = adapter.labels.exportMessage;
+    button.setAttribute("aria-label", adapter.labels.exportMessage);
     button.setAttribute(ACTION_ATTRIBUTE, "export-message");
     wrapper.append(button);
-    const aiOpsButton = createAiOperationsButton(container);
+    const aiOpsButton = createAiOperationsButton(container, adapter);
     if (aiOpsButton) {
       wrapper.append(aiOpsButton);
     }
     container.append(wrapper);
     container.setAttribute(BOUND_ATTRIBUTE, "true");
   }
-  function createAiOperationsButton(container) {
-    if (!hasAiOperationPackage(container)) {
+  function createAiOperationsButton(container, adapter) {
+    if (!adapter.supportsAiOperations || !hasAiOperationPackage(container, adapter)) {
       return null;
     }
-    const extracted = extractMessageFromContainer(container);
+    const extracted = adapter.extractMessageFromContainer(container);
     if (!extracted || extracted.role !== "assistant") {
       return null;
     }
@@ -1935,8 +2330,11 @@ ${fence}`;
     button.setAttribute(ACTION_ATTRIBUTE, "review-ai-ops");
     return button;
   }
-  function hasAiOperationPackage(container) {
-    const extracted = extractMessageFromContainer(container);
+  function hasAiOperationPackage(container, adapter) {
+    if (!adapter.supportsAiOperations) {
+      return false;
+    }
+    const extracted = adapter.extractMessageFromContainer(container);
     if (!extracted || extracted.role !== "assistant") {
       return false;
     }
@@ -1945,21 +2343,22 @@ ${fence}`;
       sourceTitle: extracted.title
     }).length > 0;
   }
-  async function saveContainerMessage(container, button) {
-    const extracted = extractMessageFromContainer(container);
+  async function saveContainerMessage(container, button, adapter) {
+    const extracted = adapter.extractMessageFromContainer(container);
     if (!extracted) {
-      setButtonError(button);
+      setButtonError(button, adapter);
       return;
     }
     button.disabled = true;
     button.classList.remove("has-error");
-    setButtonContent(button);
+    setButtonContent(button, adapter);
     let exported = false;
     try {
       await sendRuntimeMessage({
         type: "SAVE_CHATGPT_MESSAGE",
         payload: {
           sourceThreadId: extracted.sourceThreadId,
+          source: extracted.source,
           title: extracted.title,
           sourceMessageId: extracted.sourceMessageId,
           sourceMessageKey: createExportSourceMessageKey(extracted.sourceMessageKey),
@@ -1971,29 +2370,30 @@ ${fence}`;
       });
       exported = true;
     } catch {
-      setButtonError(button);
+      setButtonError(button, adapter);
     } finally {
       button.disabled = false;
       if (exported) {
-        resetExportButton(button);
+        resetExportButton(button, adapter);
       }
     }
   }
-  async function saveSelectedMessage(button) {
-    const extracted = extractSelectionFromDocument(window.getSelection());
+  async function saveSelectedMessage(button, adapter) {
+    const extracted = adapter.extractSelectionFromDocument(window.getSelection());
     if (!extracted) {
-      hideSelectionButton(button);
+      hideSelectionButton(button, adapter);
       return;
     }
     button.disabled = true;
     button.classList.remove("has-error");
-    setButtonContent(button);
+    setButtonContent(button, adapter);
     let exported = false;
     try {
       await sendRuntimeMessage({
         type: "SAVE_CHATGPT_MESSAGE",
         payload: {
           sourceThreadId: extracted.sourceThreadId,
+          source: extracted.source,
           title: extracted.title,
           sourceMessageId: extracted.sourceMessageId,
           sourceMessageKey: createExportSourceMessageKey(extracted.sourceMessageKey),
@@ -2004,20 +2404,20 @@ ${fence}`;
         }
       });
       exported = true;
-      window.setTimeout(() => hideSelectionButton(button), 900);
+      window.setTimeout(() => hideSelectionButton(button, adapter), 900);
     } catch {
-      setButtonError(button);
+      setButtonError(button, adapter);
     } finally {
       button.disabled = false;
       if (exported) {
-        resetExportButton(button);
+        resetExportButton(button, adapter);
       }
     }
   }
-  async function reviewAiOperations(container, button) {
-    const extracted = extractMessageFromContainer(container);
+  async function reviewAiOperations(container, button, adapter) {
+    const extracted = adapter.extractMessageFromContainer(container);
     if (!extracted) {
-      setButtonError(button);
+      setButtonError(button, adapter);
       return;
     }
     const [operationPackage] = parseAiOperationPackagesFromMarkdown(extracted.contentMarkdown, {
@@ -2025,7 +2425,7 @@ ${fence}`;
       sourceTitle: extracted.title
     });
     if (!operationPackage) {
-      setButtonError(button);
+      setButtonError(button, adapter);
       return;
     }
     button.disabled = true;
@@ -2038,10 +2438,10 @@ ${fence}`;
       });
       queued = response.queued;
       if (!response.queued) {
-        setButtonError(button);
+        setButtonError(button, adapter);
       }
     } catch {
-      setButtonError(button);
+      setButtonError(button, adapter);
     } finally {
       button.disabled = false;
       if (queued) {
@@ -2049,22 +2449,22 @@ ${fence}`;
       }
     }
   }
-  function updateSelectionButton(button) {
+  function updateSelectionButton(button, adapter) {
     const selection = window.getSelection();
-    const extracted = extractSelectionFromDocument(selection);
+    const extracted = adapter.extractSelectionFromDocument(selection);
     if (!selection || !extracted) {
-      hideSelectionButton(button);
+      hideSelectionButton(button, adapter);
       return;
     }
     const range = selection.getRangeAt(0);
     const rect = getUsefulRangeRect(range);
     if (!rect) {
-      hideSelectionButton(button);
+      hideSelectionButton(button, adapter);
       return;
     }
     button.classList.remove("is-saved", "has-error");
     button.disabled = false;
-    setButtonContent(button);
+    setButtonContent(button, adapter);
     button.style.left = `${Math.min(window.innerWidth - 16, Math.max(8, rect.left + rect.width / 2))}px`;
     button.style.top = `${Math.max(8, rect.top - 42)}px`;
     button.style.display = "inline-flex";
@@ -2083,23 +2483,23 @@ ${fence}`;
     const fallback = range.getBoundingClientRect();
     return fallback.width > 0 && fallback.height > 0 ? fallback : null;
   }
-  function hideSelectionButton(button) {
+  function hideSelectionButton(button, adapter) {
     button.style.display = "none";
     button.classList.remove("is-saved", "has-error");
     button.disabled = false;
-    button.textContent = EXPORT_LABEL;
+    button.textContent = adapter.labels.exportMessage;
   }
-  function resetExportButton(button) {
+  function resetExportButton(button, adapter) {
     button.classList.remove("is-saved", "has-error");
-    setButtonContent(button);
+    setButtonContent(button, adapter);
   }
-  function setButtonError(button) {
+  function setButtonError(button, adapter) {
     button.classList.add("has-error");
     button.classList.remove("is-saved");
-    setButtonContent(button);
+    setButtonContent(button, adapter);
     button.disabled = false;
   }
-  function setButtonContent(button) {
+  function setButtonContent(button, adapter) {
     if (button.getAttribute(ACTION_ATTRIBUTE) === "review-ai-ops") {
       button.textContent = AI_OPS_LABEL;
       return;
@@ -2111,7 +2511,7 @@ ${fence}`;
     icon.alt = "";
     icon.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
-    label.textContent = EXPORT_LABEL;
+    label.textContent = adapter.labels.exportMessage;
     button.append(icon, label);
   }
   function createExportSourceMessageKey(baseKey) {
@@ -2123,6 +2523,7 @@ ${fence}`;
   }
   let controller = null;
   let lastConversationId = null;
+  let lastSource = null;
   if (!window.__chatGptNotesContentScriptStarted) {
     window.__chatGptNotesContentScriptStarted = true;
     bootstrap();
@@ -2140,24 +2541,35 @@ ${fence}`;
     }, 1e3);
   }
   function syncConversationState() {
-    const context = getCurrentChatGptConversation();
+    const adapter = getCurrentAdapter();
+    const context = (adapter == null ? void 0 : adapter.getCurrentContext()) ?? null;
     if (!context) {
       controller == null ? void 0 : controller.stop();
       controller = null;
       lastConversationId = null;
+      lastSource = null;
       return;
     }
-    if (context.sourceThreadId === lastConversationId) {
+    if (context.source === lastSource && context.sourceThreadId === lastConversationId) {
       controller == null ? void 0 : controller.scan();
       return;
     }
     controller == null ? void 0 : controller.stop();
+    lastSource = context.source;
     lastConversationId = context.sourceThreadId;
-    controller = startMessageCaptureOverlay();
+    controller = startMessageCaptureOverlay(adapter);
     void sendRuntimeMessage({
       type: "CHATGPT_THREAD_CHANGED",
       payload: context
     });
+  }
+  function getCurrentAdapter() {
+    const chatGptContext = chatGptCaptureAdapter.getCurrentContext();
+    if (chatGptContext) {
+      return chatGptCaptureAdapter;
+    }
+    const deepWikiContext = deepWikiCaptureAdapter.getCurrentContext();
+    return deepWikiContext ? deepWikiCaptureAdapter : null;
   }
 })();
 //# sourceMappingURL=content.js.map
