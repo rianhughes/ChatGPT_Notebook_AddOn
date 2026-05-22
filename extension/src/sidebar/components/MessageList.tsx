@@ -1,8 +1,8 @@
-import { GripVertical, Undo2 } from "lucide-react";
+import { GripVertical, Sparkles, Undo2 } from "lucide-react";
 import type { DragEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
-import { markdownToPlainText } from "../../core/markdown";
+import { formatPastedNoteMarkdown, markdownToPlainText } from "../../core/markdown";
 import type { SavedMessage } from "../../core/models";
 import {
   encodeNoteSelectionDragPayload,
@@ -37,7 +37,7 @@ type MessageListProps = {
   onSaveMessageEdit(message: SavedMessage, title: string, contentMarkdown: string): Promise<void>;
   onDeleteMessage(message: SavedMessage): void;
   onDeleteMessageSection(message: SavedMessage, headingIndex: number): void;
-  onDeleteSelectedText(message: SavedMessage): void;
+  onDeleteSelectedText(message: SavedMessage): void | Promise<void>;
   onUndoMessageEdit(message: SavedMessage): void;
   onUndoDeletedMessage(): void;
 };
@@ -109,8 +109,12 @@ export function MessageList({
         return;
       }
 
+      const scrollSnapshot = captureScrollSnapshot(getMessageElement(message.id));
+
       event.preventDefault();
-      onDeleteSelectedText(message);
+      void Promise.resolve(onDeleteSelectedText(message)).finally(() => {
+        restoreScrollSnapshotAfterRender(scrollSnapshot);
+      });
     }
 
     window.addEventListener("keydown", deleteSelectedTextOnBackspace);
@@ -216,6 +220,10 @@ export function MessageList({
     setEditingMessageId(null);
     setDraftTitle("");
     setDraftMarkdown("");
+  }
+
+  function formatDraftEdit() {
+    setDraftMarkdown((currentMarkdown) => formatPastedNoteMarkdown(currentMarkdown));
   }
 
   async function saveSelectedTextEdit(message: SavedMessage) {
@@ -481,11 +489,23 @@ export function MessageList({
                     </label>
                     <textarea
                       className="message-editor-textarea"
+                      aria-label="Edit note Markdown"
                       value={draftMarkdown}
                       rows={Math.max(8, Math.min(24, draftMarkdown.split("\n").length + 2))}
                       onChange={(event) => setDraftMarkdown(event.target.value)}
                     />
                     <div className="message-editor-actions">
+                      <button
+                        className="tool-button secondary"
+                        type="button"
+                        title="Format pasted text"
+                        aria-label="Format pasted text"
+                        disabled={!draftMarkdown.trim()}
+                        onClick={formatDraftEdit}
+                      >
+                        <Sparkles size={16} aria-hidden="true" />
+                        Format
+                      </button>
                       <button className="tool-button" type="button" onClick={() => void saveEdit(message)}>
                         Save
                       </button>
@@ -633,6 +653,76 @@ function getMessageElement(messageId: string): HTMLElement | null {
       (element) => element.dataset.noteMessageId === messageId,
     ) ?? null
   );
+}
+
+type ScrollElementSnapshot = {
+  element: Element;
+  left: number;
+  top: number;
+};
+
+type ScrollSnapshot = {
+  elements: ScrollElementSnapshot[];
+  windowX: number;
+  windowY: number;
+};
+
+export function captureScrollSnapshot(anchor: Element | null): ScrollSnapshot {
+  const elements: ScrollElementSnapshot[] = [];
+  const seenElements = new Set<Element>();
+  let element: Element | null = anchor;
+
+  while (element) {
+    if (!seenElements.has(element)) {
+      seenElements.add(element);
+      elements.push({ element, left: element.scrollLeft, top: element.scrollTop });
+    }
+
+    element = element.parentElement;
+  }
+
+  const scrollingElement = document.scrollingElement;
+
+  if (scrollingElement && !seenElements.has(scrollingElement)) {
+    elements.push({ element: scrollingElement, left: scrollingElement.scrollLeft, top: scrollingElement.scrollTop });
+  }
+
+  return { elements, windowX: window.scrollX, windowY: window.scrollY };
+}
+
+export function restoreScrollSnapshotAfterRender(snapshot: ScrollSnapshot): void {
+  restoreScrollSnapshot(snapshot);
+
+  scheduleScrollRestore(() => {
+    restoreScrollSnapshot(snapshot);
+    scheduleScrollRestore(() => restoreScrollSnapshot(snapshot));
+  });
+}
+
+function restoreScrollSnapshot(snapshot: ScrollSnapshot) {
+  for (const item of snapshot.elements) {
+    item.element.scrollLeft = item.left;
+    item.element.scrollTop = item.top;
+  }
+
+  if (window.scrollX === snapshot.windowX && window.scrollY === snapshot.windowY) {
+    return;
+  }
+
+  try {
+    window.scrollTo(snapshot.windowX, snapshot.windowY);
+  } catch {
+    // Some test DOMs expose scrollTo without implementing it.
+  }
+}
+
+function scheduleScrollRestore(callback: () => void) {
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(callback);
+    return;
+  }
+
+  window.setTimeout(callback, 0);
 }
 
 export function getMessageForKeyboardSelection(

@@ -2,6 +2,8 @@ import { notesDb } from "../storage/db";
 import { contentHashFromParts, createId } from "./hash";
 import { deleteExactTextFromMarkdown, markdownToPlainText } from "./markdown";
 import type {
+  AiOperationPackage,
+  AiOperationProposal,
   AppendMessageInput,
   ChatGptThread,
   ChatGptThreadInput,
@@ -24,6 +26,29 @@ export type NotebookSnapshot = {
   thread: ChatGptThread;
   messages: SavedMessage[];
 };
+
+export async function getAiOperationProposals(): Promise<AiOperationProposal[]> {
+  return (await notesDb.aiOperationProposals.toArray()).sort((left, right) => left.createdAt - right.createdAt);
+}
+
+export async function saveAiOperationProposal(operationPackage: AiOperationPackage): Promise<AiOperationProposal> {
+  const timestamp = Date.now();
+  const proposal: AiOperationProposal = {
+    id: createId("ai-proposal"),
+    sourceThreadId: operationPackage.sourceThreadId,
+    sourceTitle: operationPackage.sourceTitle,
+    package: operationPackage,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  await notesDb.aiOperationProposals.add(proposal);
+  return proposal;
+}
+
+export async function deleteAiOperationProposal(proposalId: string): Promise<void> {
+  await notesDb.aiOperationProposals.delete(proposalId);
+}
 
 export async function getThreads(): Promise<ChatGptThread[]> {
   const threads = await notesDb.threads.toArray();

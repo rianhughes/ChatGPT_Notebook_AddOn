@@ -19,6 +19,22 @@ export function markdownToPlainText(markdown: string): string {
     .trim();
 }
 
+export function formatPastedNoteMarkdown(markdown: string): string {
+  const normalizedMarkdown = markdown
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
+
+  if (!normalizedMarkdown) {
+    return "";
+  }
+
+  return formatLooseMarkdownLines(normalizedMarkdown.split("\n")).replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function deleteExactTextFromMarkdown(markdown: string, selectedText: string): string | null {
   const normalizedMarkdown = markdown.replace(/\r\n/g, "\n");
   const range = findSelectedTextRangeInMarkdown(normalizedMarkdown, selectedText);
@@ -210,6 +226,208 @@ function normalizeAfterMove(markdown: string): string {
 
 function normalizeAfterSelectionReplacement(markdown: string): string {
   return markdown.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function formatLooseMarkdownLines(lines: string[]): string {
+  const blocks: string[] = [];
+  const paragraphLines: string[] = [];
+  let index = 0;
+
+  function flushParagraph() {
+    const paragraph = paragraphLines.map((line) => line.trim()).filter(Boolean).join(" ");
+
+    if (paragraph) {
+      blocks.push(paragraph);
+    }
+
+    paragraphLines.length = 0;
+  }
+
+  while (index < lines.length) {
+    const line = lines[index];
+
+    if (!line.trim()) {
+      flushParagraph();
+      index += 1;
+      continue;
+    }
+
+    const fencedCodeBlock = collectFencedCodeBlock(lines, index);
+
+    if (fencedCodeBlock) {
+      flushParagraph();
+      blocks.push(fencedCodeBlock.markdown);
+      index = fencedCodeBlock.nextIndex;
+      continue;
+    }
+
+    const markdownTableBlock = collectExistingMarkdownTable(lines, index);
+
+    if (markdownTableBlock) {
+      flushParagraph();
+      blocks.push(markdownTableBlock.markdown);
+      index = markdownTableBlock.nextIndex;
+      continue;
+    }
+
+    const tableBlock = collectDelimitedTable(lines, index);
+
+    if (tableBlock) {
+      flushParagraph();
+      blocks.push(tableBlock.markdown);
+      index = tableBlock.nextIndex;
+      continue;
+    }
+
+    const structuralBlock = collectMarkdownStructuralBlock(lines, index);
+
+    if (structuralBlock) {
+      flushParagraph();
+      blocks.push(structuralBlock.markdown);
+      index = structuralBlock.nextIndex;
+      continue;
+    }
+
+    paragraphLines.push(line);
+    index += 1;
+  }
+
+  flushParagraph();
+  return blocks.join("\n\n");
+}
+
+function collectFencedCodeBlock(lines: string[], startIndex: number): { markdown: string; nextIndex: number } | null {
+  if (!/^\s*```/.test(lines[startIndex])) {
+    return null;
+  }
+
+  const block = [lines[startIndex].trimEnd()];
+  let index = startIndex + 1;
+
+  while (index < lines.length) {
+    block.push(lines[index].trimEnd());
+
+    if (/^\s*```\s*$/.test(lines[index])) {
+      index += 1;
+      break;
+    }
+
+    index += 1;
+  }
+
+  return { markdown: block.join("\n").trim(), nextIndex: index };
+}
+
+function collectExistingMarkdownTable(
+  lines: string[],
+  startIndex: number,
+): { markdown: string; nextIndex: number } | null {
+  if (!isMarkdownTableLine(lines[startIndex]) || !isMarkdownTableSeparator(lines[startIndex + 1] ?? "")) {
+    return null;
+  }
+
+  const tableLines = [lines[startIndex].trim(), lines[startIndex + 1].trim()];
+  let index = startIndex + 2;
+
+  while (index < lines.length && isMarkdownTableLine(lines[index])) {
+    tableLines.push(lines[index].trim());
+    index += 1;
+  }
+
+  return { markdown: tableLines.join("\n"), nextIndex: index };
+}
+
+function collectDelimitedTable(lines: string[], startIndex: number): { markdown: string; nextIndex: number } | null {
+  const headerCells = splitDelimitedTableRow(lines[startIndex]);
+
+  if (!headerCells || headerCells.length < 2) {
+    return null;
+  }
+
+  const rows = [headerCells];
+  let index = startIndex + 1;
+
+  while (index < lines.length) {
+    const cells = splitDelimitedTableRow(lines[index]);
+
+    if (!cells || cells.length !== headerCells.length) {
+      break;
+    }
+
+    rows.push(cells);
+    index += 1;
+  }
+
+  if (rows.length < 2) {
+    return null;
+  }
+
+  return { markdown: createMarkdownTable(rows), nextIndex: index };
+}
+
+function collectMarkdownStructuralBlock(
+  lines: string[],
+  startIndex: number,
+): { markdown: string; nextIndex: number } | null {
+  if (!isMarkdownStructuralLine(lines[startIndex])) {
+    return null;
+  }
+
+  const block = [lines[startIndex].trimEnd()];
+  let index = startIndex + 1;
+
+  while (index < lines.length && lines[index].trim() && isMarkdownStructuralLine(lines[index])) {
+    block.push(lines[index].trimEnd());
+    index += 1;
+  }
+
+  return { markdown: block.join("\n").trim(), nextIndex: index };
+}
+
+function splitDelimitedTableRow(line: string): string[] | null {
+  const trimmedLine = line.trim();
+
+  if (!trimmedLine || isMarkdownTableSeparator(trimmedLine)) {
+    return null;
+  }
+
+  if (trimmedLine.includes("\t")) {
+    const cells = trimmedLine.split(/\t+/).map((cell) => cell.trim());
+    return cells.every(Boolean) ? cells : null;
+  }
+
+  if (/\s{2,}/.test(trimmedLine)) {
+    const cells = trimmedLine.split(/\s{2,}/).map((cell) => cell.trim());
+    return cells.length > 1 && cells.every(Boolean) ? cells : null;
+  }
+
+  return null;
+}
+
+function createMarkdownTable(rows: string[][]): string {
+  const [header, ...bodyRows] = rows;
+  const separator = header.map(() => "---");
+  const tableRows = [header, separator, ...bodyRows];
+
+  return tableRows.map((row) => `| ${row.map(escapeMarkdownTableCell).join(" | ")} |`).join("\n");
+}
+
+function escapeMarkdownTableCell(cell: string): string {
+  return cell.replace(/\s+/g, " ").replace(/\|/g, "\\|").trim();
+}
+
+function isMarkdownTableLine(line: string): boolean {
+  return /^\s*\|.+\|\s*$/.test(line);
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function isMarkdownStructuralLine(line: string): boolean {
+  return /^(\s{0,3}#{1,6}\s+\S|\s{0,3}>\s+\S|\s{0,3}[-*+]\s+\S|\s{0,3}\d+[.)]\s+\S|\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$)/.test(
+    line,
+  );
 }
 
 function removeSectionBoundaryMarkers(markdown: string): string {

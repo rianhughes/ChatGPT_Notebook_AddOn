@@ -1,6 +1,7 @@
 .cgpt-notes-capture {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   margin-inline-start: 6px;
   vertical-align: middle;
 }
@@ -44,6 +45,15 @@
 .cgpt-notes-save-button.has-error {
   border-color: rgba(157, 47, 47, 0.42);
   color: #9d2f2f;
+}
+
+.cgpt-notes-ai-ops-button {
+  border-color: rgba(63, 80, 148, 0.42);
+  color: #35468f;
+}
+
+.cgpt-notes-ai-ops-button:hover {
+  background: #edf0fb;
 }
 
 .cgpt-notes-selection-popover {

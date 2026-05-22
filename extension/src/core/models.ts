@@ -32,6 +32,85 @@ export type AppSetting = {
   updatedAt: number;
 };
 
+export type AiNotebookOperation =
+  | {
+      type: "create_note";
+      threadId: string;
+      contentMarkdown: string;
+      title?: string | null;
+      afterMessageId?: string | null;
+    }
+  | {
+      type: "update_note";
+      threadId: string;
+      messageId: string;
+      contentMarkdown: string;
+      title?: string | null;
+      expectedContentHash?: string | null;
+    }
+  | {
+      type: "delete_note";
+      threadId: string;
+      messageId: string;
+      expectedContentHash?: string | null;
+    }
+  | {
+      type: "move_note";
+      threadId: string;
+      messageId: string;
+      afterMessageId: string | null;
+    }
+  | {
+      type: "merge_notes";
+      threadId: string;
+      messageIds: string[];
+    }
+  | {
+      type: "create_notebook";
+      title: string;
+      folderId?: string | null;
+    }
+  | {
+      type: "rename_notebook";
+      threadId: string;
+      title: string;
+    }
+  | {
+      type: "delete_notebook";
+      threadId: string;
+    }
+  | {
+      type: "move_notebook_to_folder";
+      threadId: string;
+      folderId: string | null;
+    }
+  | {
+      type: "create_folder";
+      title: string;
+    }
+  | {
+      type: "rename_folder";
+      folderId: string;
+      title: string;
+    };
+
+export type AiOperationPackage = {
+  protocolVersion: 1;
+  requestId: string;
+  sourceThreadId: string;
+  sourceTitle: string;
+  operations: AiNotebookOperation[];
+};
+
+export type AiOperationProposal = {
+  id: string;
+  sourceThreadId: string;
+  sourceTitle: string;
+  package: AiOperationPackage;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type SavedMessage = {
   id: string;
   threadId: string;

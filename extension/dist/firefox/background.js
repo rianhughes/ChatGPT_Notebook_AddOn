@@ -1098,6 +1098,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         return true;
       case "INSERT_TEXT_IN_CHATGPT":
         return typeof value.payload.text === "string";
+      case "SUBMIT_AI_OPERATION_PACKAGE":
+        return isAiOperationPackage(value.payload);
       case "SOURCE_MESSAGE_SAVED_STATE_CHANGED":
         return typeof value.payload.sourceThreadId === "string" && typeof value.payload.sourceMessageKey === "string" && typeof value.payload.saved === "boolean";
       case "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES":
@@ -1114,6 +1116,9 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   function isSaveStatus(value) {
     return value === "created" || value === "already_saved" || value === "updated";
+  }
+  function isAiOperationPackage(value) {
+    return value.protocolVersion === 1 && typeof value.requestId === "string" && typeof value.sourceThreadId === "string" && typeof value.sourceTitle === "string" && Array.isArray(value.operations) && value.operations.length > 0;
   }
   function isRecord(value) {
     return typeof value === "object" && value !== null;
@@ -4167,6 +4172,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       __publicField(this, "messages");
       __publicField(this, "settings");
       __publicField(this, "folders");
+      __publicField(this, "aiOperationProposals");
       this.version(1).stores({
         threads: "&id, &[source+sourceThreadId], updatedAt",
         messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt"
@@ -4181,6 +4187,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
         settings: "&key, updatedAt",
         folders: "&id, sortOrder, updatedAt"
+      });
+      this.version(4).stores({
+        threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
+        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
+        settings: "&key, updatedAt",
+        folders: "&id, sortOrder, updatedAt",
+        aiOperationProposals: "&id, sourceThreadId, createdAt, updatedAt"
       });
     }
   }
@@ -4205,6 +4218,19 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   }
   function getSectionBoundaryLinePattern(flags = "") {
     return new RegExp(`^\\s*<!--\\s*${escapeRegExp(SECTION_BOUNDARY_MARKER)}(?::[1-6])?\\s*-->\\s*$`, flags);
+  }
+  async function saveAiOperationProposal(operationPackage) {
+    const timestamp = Date.now();
+    const proposal = {
+      id: createId("ai-proposal"),
+      sourceThreadId: operationPackage.sourceThreadId,
+      sourceTitle: operationPackage.sourceTitle,
+      package: operationPackage,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    await notesDb.aiOperationProposals.add(proposal);
+    return proposal;
   }
   async function getThreadBySource(sourceThreadId) {
     return await notesDb.threads.where("[source+sourceThreadId]").equals(["chatgpt", sourceThreadId]).first() ?? null;
@@ -4558,6 +4584,25 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           inserted: false,
           error: "Open a ChatGPT tab before inserting notes."
         };
+      }
+      case "SUBMIT_AI_OPERATION_PACKAGE": {
+        try {
+          const proposal = await saveAiOperationProposal(message.payload);
+          try {
+            await openDetachedSidebarWindow();
+          } catch {
+            await sidebarAdapter.openForCurrentWindow({});
+          }
+          return {
+            queued: true,
+            proposalId: proposal.id
+          };
+        } catch {
+          return {
+            queued: false,
+            error: "Could not queue ChatGPT note changes."
+          };
+        }
       }
       case "OPEN_SIDEBAR_WINDOW": {
         try {

@@ -128,6 +128,72 @@ describe("MessageList note headers", () => {
     });
   });
 
+  it("keeps the note view still after deleting highlighted text with Backspace", async () => {
+    const scrollHost = document.createElement("div");
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const note = message("a", "Alpha beta");
+    const onDeleteSelectedText = vi.fn(async () => {
+      scrollHost.scrollTop = 0;
+      await Promise.resolve();
+      scrollHost.scrollTop = 0;
+    });
+
+    document.body.append(scrollHost);
+    scrollHost.append(host);
+    scrollHost.scrollTop = 180;
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
+          onSaveMessageEdit: vi.fn(async () => undefined),
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText,
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    const paragraphText = getFirstTextNode(host.querySelector(".markdown-paragraph"));
+    const range = document.createRange();
+
+    expect(paragraphText).not.toBeNull();
+    range.setStart(paragraphText!, 0);
+    range.setEnd(paragraphText!, 5);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onDeleteSelectedText).toHaveBeenCalledWith(note);
+    expect(scrollHost.scrollTop).toBe(180);
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
   it("makes the ChatGPT insert button glow while note text is highlighted", async () => {
     const host = document.createElement("div");
     document.body.append(host);
@@ -282,6 +348,77 @@ describe("MessageList note headers", () => {
     });
 
     expect(onSaveSelectedTextEdit).toHaveBeenCalledWith(note, "Alpha", "Edited alpha");
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("formats pasted table text in the full note editor before saving", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = message("a", "Draft note");
+    const onSaveMessageEdit = vi.fn(async () => undefined);
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
+          onSaveMessageEdit,
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText: vi.fn(),
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    await act(() => {
+      host.querySelector<HTMLButtonElement>(".message-edit-button")?.click();
+    });
+
+    const textarea = host.querySelector<HTMLTextAreaElement>("textarea[aria-label='Edit note Markdown']");
+    const pasted = [
+      "Assuming RP means RPC.",
+      "Step\tCode location\tInput\tOutput\tBottleneck",
+      "1. RPC server setup\tnode/node.go\tConfigured RPC paths\tHTTP mux routes path\tStartup only",
+    ].join("\n");
+
+    expect(textarea).not.toBeNull();
+
+    await act(() => {
+      setControlValue(textarea!, pasted);
+    });
+
+    await act(() => {
+      host.querySelector<HTMLButtonElement>('button[aria-label="Format pasted text"]')?.click();
+    });
+
+    expect(textarea?.value).toContain("| Step | Code location | Input | Output | Bottleneck |");
+    expect(textarea?.value).toContain("| 1. RPC server setup | node/node.go | Configured RPC paths | HTTP mux routes path | Startup only |");
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(".message-editor-actions .tool-button:not(.secondary)")?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSaveMessageEdit).toHaveBeenCalledWith(note, "Draft note", textarea?.value);
 
     await act(() => {
       root.unmount();

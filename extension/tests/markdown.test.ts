@@ -4,6 +4,7 @@ import {
   convertSelectedTextToHeadingInMarkdown,
   deleteHeadingSectionFromMarkdown,
   extractHeadingSectionFromMarkdown,
+  formatPastedNoteMarkdown,
   moveSelectedTextToHeadingSectionInMarkdown,
   replaceSelectedTextInMarkdown,
   unmakeHeadingSectionInMarkdown,
@@ -13,6 +14,36 @@ const HEADING_BOUNDARY = "<!-- cgpt-notes-section-boundary:2 -->";
 const CHILD_HEADING_BOUNDARY = "<!-- cgpt-notes-section-boundary:3 -->";
 
 describe("markdown", () => {
+  it("formats pasted tab-delimited notes as paragraphs and Markdown tables", () => {
+    const pasted = [
+      "Assuming \"RP\" means RPC: here's the read path for a representative starknet_getStorageAt query. v8/v9 are similar; this traces v10.",
+      "Step\tCode location\tInput\tOutput\tBottleneck",
+      "1. RPC server setup\tnode/node.go (line 449), node/http.go (line 111)\tConfigured RPC paths like /, /rpc, /v0_10, /rpc/v0_10\tHTTP mux routes path to a jsonrpc.Server\tStartup only; not per-query",
+      "2. HTTP transport\tnode/http.go (line 111)\tJSON-RPC request\tDecoded RPC call\tNetwork and JSON parsing",
+    ].join("\n");
+
+    expect(formatPastedNoteMarkdown(pasted)).toBe(
+      [
+        "Assuming \"RP\" means RPC: here's the read path for a representative starknet_getStorageAt query. v8/v9 are similar; this traces v10.",
+        "",
+        "| Step | Code location | Input | Output | Bottleneck |",
+        "| --- | --- | --- | --- | --- |",
+        "| 1. RPC server setup | node/node.go (line 449), node/http.go (line 111) | Configured RPC paths like /, /rpc, /v0_10, /rpc/v0_10 | HTTP mux routes path to a jsonrpc.Server | Startup only; not per-query |",
+        "| 2. HTTP transport | node/http.go (line 111) | JSON-RPC request | Decoded RPC call | Network and JSON parsing |",
+      ].join("\n"),
+    );
+  });
+
+  it("formats wrapped plain text without changing fenced code", () => {
+    const pasted = ["First line", "continues the same paragraph.", "", "```ts", "const answer = 42;", "```"].join(
+      "\n",
+    );
+
+    expect(formatPastedNoteMarkdown(pasted)).toBe(
+      ["First line continues the same paragraph.", "", "```ts", "const answer = 42;", "```"].join("\n"),
+    );
+  });
+
   it("turns a highlighted paragraph line into a level-two heading", () => {
     const markdown = ["Intro", "", "Make this collapsible", "", "Body under it."].join("\n");
 

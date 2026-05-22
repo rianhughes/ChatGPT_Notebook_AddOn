@@ -992,7 +992,7 @@
     return () => browser.runtime.onMessage.removeListener(handler);
   }
   function isExtensionMessage(value) {
-    if (!isRecord(value) || typeof value.type !== "string" || !isRecord(value.payload)) {
+    if (!isRecord$1(value) || typeof value.type !== "string" || !isRecord$1(value.payload)) {
       return false;
     }
     switch (value.type) {
@@ -1014,6 +1014,8 @@
         return true;
       case "INSERT_TEXT_IN_CHATGPT":
         return typeof value.payload.text === "string";
+      case "SUBMIT_AI_OPERATION_PACKAGE":
+        return isAiOperationPackage(value.payload);
       case "SOURCE_MESSAGE_SAVED_STATE_CHANGED":
         return typeof value.payload.sourceThreadId === "string" && typeof value.payload.sourceMessageKey === "string" && typeof value.payload.saved === "boolean";
       case "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES":
@@ -1031,7 +1033,10 @@
   function isSaveStatus(value) {
     return value === "created" || value === "already_saved" || value === "updated";
   }
-  function isRecord(value) {
+  function isAiOperationPackage(value) {
+    return value.protocolVersion === 1 && typeof value.requestId === "string" && typeof value.sourceThreadId === "string" && typeof value.sourceTitle === "string" && Array.isArray(value.operations) && value.operations.length > 0;
+  }
+  function isRecord$1(value) {
     return typeof value === "object" && value !== null;
   }
   const COMPOSER_SELECTORS = [
@@ -1140,6 +1145,14 @@ ${text}` : text;
     return stableHash(`${input.contentMarkdown}
 ${normalizeForKey(input.contentText)}`);
   }
+  function createId(prefix) {
+    var _a, _b;
+    const randomId = (_b = (_a = globalThis.crypto) == null ? void 0 : _a.randomUUID) == null ? void 0 : _b.call(_a);
+    if (randomId) {
+      return `${prefix}_${randomId}`;
+    }
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  }
   const CHATGPT_HOSTS = /* @__PURE__ */ new Set(["chatgpt.com", "chat.openai.com"]);
   function parseChatGptConversationId(input) {
     const url = typeof input === "string" ? safeUrl(input) : input;
@@ -1204,7 +1217,7 @@ ${normalizeForKey(input.contentText)}`);
     "UL"
   ]);
   function extractMarkdownFromNode(node) {
-    return normalizeMarkdown(renderNode(node, { inPre: false, listDepth: 0 }));
+    return normalizeMarkdown$1(renderNode(node, { inPre: false, listDepth: 0 }));
   }
   function extractMarkdownFromRange(range) {
     const preElement = getSharedAncestor(range, "pre");
@@ -1304,7 +1317,7 @@ ${rendered.trim()}
   function renderChildren(node, context) {
     return Array.from(node.childNodes).map((child) => renderNode(child, context)).join("");
   }
-  function normalizeMarkdown(markdown) {
+  function normalizeMarkdown$1(markdown) {
     return convertTabDelimitedTablesOutsideCode(markdown).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   }
   function renderTable(table, context) {
@@ -1606,13 +1619,160 @@ ${fence}`;
     const style = window.getComputedStyle(container);
     return style.display !== "none" && style.visibility !== "hidden";
   }
+  const AI_OPERATIONS_BLOCK_LANGUAGE = "cgpt-notes-ops";
+  const MAX_AI_OPERATION_COUNT = 30;
+  const MAX_AI_OPERATION_MARKDOWN_LENGTH = 8e4;
+  function parseAiOperationPackagesFromMarkdown(markdown, context) {
+    return extractAiOperationBlocks(markdown).map((block) => parseAiOperationPackageText(block, context)).filter((item) => item !== null);
+  }
+  function parseAiOperationPackageText(text, context) {
+    try {
+      return normalizeAiOperationPackage(JSON.parse(text), context);
+    } catch {
+      return null;
+    }
+  }
+  function extractAiOperationBlocks(markdown) {
+    const blocks = [];
+    const pattern = /```([^\n`]*)\n([\s\S]*?)```/g;
+    let match = pattern.exec(markdown);
+    while (match) {
+      if (match[1].trim().toLowerCase() === AI_OPERATIONS_BLOCK_LANGUAGE) {
+        blocks.push(match[2].trim());
+      }
+      match = pattern.exec(markdown);
+    }
+    return blocks;
+  }
+  function normalizeAiOperationPackage(value, context) {
+    if (!isRecord(value)) {
+      return null;
+    }
+    const operations = Array.isArray(value.operations) ? value.operations.map(normalizeAiOperation).filter((operation) => Boolean(operation)) : [];
+    if (operations.length === 0 || operations.length > MAX_AI_OPERATION_COUNT) {
+      return null;
+    }
+    return {
+      protocolVersion: 1,
+      requestId: typeof value.requestId === "string" && value.requestId.trim() ? value.requestId.trim() : createId("ai-request"),
+      sourceThreadId: getString(value.sourceThreadId) ?? context.sourceThreadId,
+      sourceTitle: getString(value.sourceTitle) ?? context.sourceTitle,
+      operations
+    };
+  }
+  function normalizeAiOperation(value) {
+    if (!isRecord(value) || typeof value.type !== "string") {
+      return null;
+    }
+    switch (value.type) {
+      case "create_note": {
+        const threadId = getString(value.threadId);
+        const contentMarkdown = getMarkdown(value.contentMarkdown);
+        if (!threadId || contentMarkdown === null) {
+          return null;
+        }
+        return {
+          type: "create_note",
+          threadId,
+          contentMarkdown,
+          title: getNullableString(value.title),
+          ...value.afterMessageId === void 0 ? {} : { afterMessageId: getNullableString(value.afterMessageId) }
+        };
+      }
+      case "update_note": {
+        const threadId = getString(value.threadId);
+        const messageId = getString(value.messageId);
+        const contentMarkdown = getMarkdown(value.contentMarkdown);
+        return threadId && messageId && contentMarkdown !== null ? {
+          type: "update_note",
+          threadId,
+          messageId,
+          contentMarkdown,
+          title: getNullableString(value.title),
+          expectedContentHash: getNullableString(value.expectedContentHash)
+        } : null;
+      }
+      case "delete_note": {
+        const threadId = getString(value.threadId);
+        const messageId = getString(value.messageId);
+        return threadId && messageId ? {
+          type: "delete_note",
+          threadId,
+          messageId,
+          expectedContentHash: getNullableString(value.expectedContentHash)
+        } : null;
+      }
+      case "move_note": {
+        const threadId = getString(value.threadId);
+        const messageId = getString(value.messageId);
+        const afterMessageId = getNullableString(value.afterMessageId);
+        return threadId && messageId ? { type: "move_note", threadId, messageId, afterMessageId } : null;
+      }
+      case "merge_notes": {
+        const threadId = getString(value.threadId);
+        const messageIds = getStringArray(value.messageIds);
+        return threadId && messageIds.length >= 2 ? { type: "merge_notes", threadId, messageIds } : null;
+      }
+      case "create_notebook": {
+        const title = getString(value.title);
+        return title ? { type: "create_notebook", title, folderId: getNullableString(value.folderId) } : null;
+      }
+      case "rename_notebook": {
+        const threadId = getString(value.threadId);
+        const title = getString(value.title);
+        return threadId && title ? { type: "rename_notebook", threadId, title } : null;
+      }
+      case "delete_notebook": {
+        const threadId = getString(value.threadId);
+        return threadId ? { type: "delete_notebook", threadId } : null;
+      }
+      case "move_notebook_to_folder": {
+        const threadId = getString(value.threadId);
+        return threadId ? { type: "move_notebook_to_folder", threadId, folderId: getNullableString(value.folderId) } : null;
+      }
+      case "create_folder": {
+        const title = getString(value.title);
+        return title ? { type: "create_folder", title } : null;
+      }
+      case "rename_folder": {
+        const folderId = getString(value.folderId);
+        const title = getString(value.title);
+        return folderId && title ? { type: "rename_folder", folderId, title } : null;
+      }
+      default:
+        return null;
+    }
+  }
+  function normalizeMarkdown(markdown) {
+    return markdown.replace(/\r\n/g, "\n").trim();
+  }
+  function getMarkdown(value) {
+    if (typeof value !== "string" || value.length > MAX_AI_OPERATION_MARKDOWN_LENGTH) {
+      return null;
+    }
+    return normalizeMarkdown(value);
+  }
+  function getString(value) {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+  function getNullableString(value) {
+    return value === null || value === void 0 ? null : getString(value);
+  }
+  function getStringArray(value) {
+    return Array.isArray(value) ? value.filter((item) => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [];
+  }
+  function isRecord(value) {
+    return typeof value === "object" && value !== null;
+  }
   const BOUND_ATTRIBUTE = "data-cgpt-notes-bound";
   const ACTION_ATTRIBUTE = "data-cgpt-notes-action";
   const OVERLAY_CLASS = "cgpt-notes-capture";
   const BUTTON_CLASS = "cgpt-notes-save-button";
   const BUTTON_ICON_CLASS = "cgpt-notes-save-button-icon";
+  const AI_OPS_BUTTON_CLASS = "cgpt-notes-ai-ops-button";
   const SELECTION_POPOVER_CLASS = "cgpt-notes-selection-popover";
   const EXPORT_LABEL = "Export to ChatGPT Note";
+  const AI_OPS_LABEL = "Review note changes";
   function startMessageCaptureOverlay() {
     const root = findConversationRoot();
     const selectionButton = createSelectionButton();
@@ -1681,7 +1841,7 @@ ${fence}`;
       }
       const containers = findVisibleMessageContainers(root);
       containers.forEach((container) => {
-        if (!container.hasAttribute(BOUND_ATTRIBUTE) || !getMessageButton(container)) {
+        if (!container.hasAttribute(BOUND_ATTRIBUTE) || !getMessageButton(container) || hasAiOperationPackage(container) && !getAiOperationsButton(container)) {
           attachButton(container);
         }
       });
@@ -1693,7 +1853,7 @@ ${fence}`;
         return;
       }
       const action = button.getAttribute(ACTION_ATTRIBUTE);
-      if (action !== "export-message" && action !== "export-selection") {
+      if (action !== "export-message" && action !== "export-selection" && action !== "review-ai-ops") {
         return;
       }
       event.preventDefault();
@@ -1708,6 +1868,10 @@ ${fence}`;
       const container = button.closest(`[${BOUND_ATTRIBUTE}]`);
       if (!container) {
         setButtonError(button);
+        return;
+      }
+      if (action === "review-ai-ops") {
+        void reviewAiOperations(container, button);
         return;
       }
       void saveContainerMessage(container, button);
@@ -1740,8 +1904,46 @@ ${fence}`;
     button.setAttribute("aria-label", "Export message to ChatGPT Notes");
     button.setAttribute(ACTION_ATTRIBUTE, "export-message");
     wrapper.append(button);
+    const aiOpsButton = createAiOperationsButton(container);
+    if (aiOpsButton) {
+      wrapper.append(aiOpsButton);
+    }
     container.append(wrapper);
     container.setAttribute(BOUND_ATTRIBUTE, "true");
+  }
+  function createAiOperationsButton(container) {
+    if (!hasAiOperationPackage(container)) {
+      return null;
+    }
+    const extracted = extractMessageFromContainer(container);
+    if (!extracted || extracted.role !== "assistant") {
+      return null;
+    }
+    const packages = parseAiOperationPackagesFromMarkdown(extracted.contentMarkdown, {
+      sourceThreadId: extracted.sourceThreadId,
+      sourceTitle: extracted.title
+    });
+    if (packages.length === 0) {
+      return null;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `${BUTTON_CLASS} ${AI_OPS_BUTTON_CLASS}`;
+    button.textContent = AI_OPS_LABEL;
+    button.title = "Review ChatGPT note changes";
+    button.setAttribute("aria-label", "Review ChatGPT note changes");
+    button.setAttribute(ACTION_ATTRIBUTE, "review-ai-ops");
+    return button;
+  }
+  function hasAiOperationPackage(container) {
+    const extracted = extractMessageFromContainer(container);
+    if (!extracted || extracted.role !== "assistant") {
+      return false;
+    }
+    return parseAiOperationPackagesFromMarkdown(extracted.contentMarkdown, {
+      sourceThreadId: extracted.sourceThreadId,
+      sourceTitle: extracted.title
+    }).length > 0;
   }
   async function saveContainerMessage(container, button) {
     const extracted = extractMessageFromContainer(container);
@@ -1812,6 +2014,41 @@ ${fence}`;
       }
     }
   }
+  async function reviewAiOperations(container, button) {
+    const extracted = extractMessageFromContainer(container);
+    if (!extracted) {
+      setButtonError(button);
+      return;
+    }
+    const [operationPackage] = parseAiOperationPackagesFromMarkdown(extracted.contentMarkdown, {
+      sourceThreadId: extracted.sourceThreadId,
+      sourceTitle: extracted.title
+    });
+    if (!operationPackage) {
+      setButtonError(button);
+      return;
+    }
+    button.disabled = true;
+    button.classList.remove("has-error");
+    let queued = false;
+    try {
+      const response = await sendRuntimeMessage({
+        type: "SUBMIT_AI_OPERATION_PACKAGE",
+        payload: operationPackage
+      });
+      queued = response.queued;
+      if (!response.queued) {
+        setButtonError(button);
+      }
+    } catch {
+      setButtonError(button);
+    } finally {
+      button.disabled = false;
+      if (queued) {
+        button.classList.add("is-saved");
+      }
+    }
+  }
   function updateSelectionButton(button) {
     const selection = window.getSelection();
     const extracted = extractSelectionFromDocument(selection);
@@ -1834,6 +2071,9 @@ ${fence}`;
   }
   function getMessageButton(container) {
     return container.querySelector(`.${BUTTON_CLASS}[${ACTION_ATTRIBUTE}="export-message"]`);
+  }
+  function getAiOperationsButton(container) {
+    return container.querySelector(`.${BUTTON_CLASS}[${ACTION_ATTRIBUTE}="review-ai-ops"]`);
   }
   function getUsefulRangeRect(range) {
     const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
@@ -1860,6 +2100,10 @@ ${fence}`;
     button.disabled = false;
   }
   function setButtonContent(button) {
+    if (button.getAttribute(ACTION_ATTRIBUTE) === "review-ai-ops") {
+      button.textContent = AI_OPS_LABEL;
+      return;
+    }
     button.replaceChildren();
     const icon = document.createElement("img");
     icon.className = BUTTON_ICON_CLASS;

@@ -1,6 +1,7 @@
 import browser from "../browser/extensionApi";
 import { sendRuntimeMessage } from "../browser/runtime";
-import type { SaveChatGptMessageResponse } from "../core/ports";
+import { parseAiOperationPackagesFromMarkdown } from "../core/aiOperationProtocol";
+import type { SaveChatGptMessageResponse, SubmitAiOperationPackageResponse } from "../core/ports";
 import { isExtensionMessage } from "../core/ports";
 import {
   extractMessageFromContainer,
@@ -14,8 +15,10 @@ const ACTION_ATTRIBUTE = "data-cgpt-notes-action";
 const OVERLAY_CLASS = "cgpt-notes-capture";
 const BUTTON_CLASS = "cgpt-notes-save-button";
 const BUTTON_ICON_CLASS = "cgpt-notes-save-button-icon";
+const AI_OPS_BUTTON_CLASS = "cgpt-notes-ai-ops-button";
 const SELECTION_POPOVER_CLASS = "cgpt-notes-selection-popover";
 const EXPORT_LABEL = "Export to ChatGPT Note";
+const AI_OPS_LABEL = "Review note changes";
 
 export type OverlayController = {
   scan(): void;
@@ -106,7 +109,11 @@ export function startMessageCaptureOverlay(): OverlayController {
     const containers = findVisibleMessageContainers(root);
 
     containers.forEach((container) => {
-      if (!container.hasAttribute(BOUND_ATTRIBUTE) || !getMessageButton(container)) {
+      if (
+        !container.hasAttribute(BOUND_ATTRIBUTE) ||
+        !getMessageButton(container) ||
+        (hasAiOperationPackage(container) && !getAiOperationsButton(container))
+      ) {
         attachButton(container);
       }
     });
@@ -121,7 +128,7 @@ export function startMessageCaptureOverlay(): OverlayController {
 
     const action = button.getAttribute(ACTION_ATTRIBUTE);
 
-    if (action !== "export-message" && action !== "export-selection") {
+    if (action !== "export-message" && action !== "export-selection" && action !== "review-ai-ops") {
       return;
     }
 
@@ -141,6 +148,11 @@ export function startMessageCaptureOverlay(): OverlayController {
 
     if (!container) {
       setButtonError(button);
+      return;
+    }
+
+    if (action === "review-ai-ops") {
+      void reviewAiOperations(container, button);
       return;
     }
 
@@ -182,8 +194,60 @@ function attachButton(container: HTMLElement): void {
   button.setAttribute(ACTION_ATTRIBUTE, "export-message");
 
   wrapper.append(button);
+
+  const aiOpsButton = createAiOperationsButton(container);
+
+  if (aiOpsButton) {
+    wrapper.append(aiOpsButton);
+  }
+
   container.append(wrapper);
   container.setAttribute(BOUND_ATTRIBUTE, "true");
+}
+
+function createAiOperationsButton(container: HTMLElement): HTMLButtonElement | null {
+  if (!hasAiOperationPackage(container)) {
+    return null;
+  }
+
+  const extracted = extractMessageFromContainer(container);
+
+  if (!extracted || extracted.role !== "assistant") {
+    return null;
+  }
+
+  const packages = parseAiOperationPackagesFromMarkdown(extracted.contentMarkdown, {
+    sourceThreadId: extracted.sourceThreadId,
+    sourceTitle: extracted.title,
+  });
+
+  if (packages.length === 0) {
+    return null;
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `${BUTTON_CLASS} ${AI_OPS_BUTTON_CLASS}`;
+  button.textContent = AI_OPS_LABEL;
+  button.title = "Review ChatGPT note changes";
+  button.setAttribute("aria-label", "Review ChatGPT note changes");
+  button.setAttribute(ACTION_ATTRIBUTE, "review-ai-ops");
+  return button;
+}
+
+function hasAiOperationPackage(container: HTMLElement): boolean {
+  const extracted = extractMessageFromContainer(container);
+
+  if (!extracted || extracted.role !== "assistant") {
+    return false;
+  }
+
+  return (
+    parseAiOperationPackagesFromMarkdown(extracted.contentMarkdown, {
+      sourceThreadId: extracted.sourceThreadId,
+      sourceTitle: extracted.title,
+    }).length > 0
+  );
 }
 
 async function saveContainerMessage(container: HTMLElement, button: HTMLButtonElement): Promise<void> {
@@ -263,6 +327,50 @@ async function saveSelectedMessage(button: HTMLButtonElement): Promise<void> {
   }
 }
 
+async function reviewAiOperations(container: HTMLElement, button: HTMLButtonElement): Promise<void> {
+  const extracted = extractMessageFromContainer(container);
+
+  if (!extracted) {
+    setButtonError(button);
+    return;
+  }
+
+  const [operationPackage] = parseAiOperationPackagesFromMarkdown(extracted.contentMarkdown, {
+    sourceThreadId: extracted.sourceThreadId,
+    sourceTitle: extracted.title,
+  });
+
+  if (!operationPackage) {
+    setButtonError(button);
+    return;
+  }
+
+  button.disabled = true;
+  button.classList.remove("has-error");
+  let queued = false;
+
+  try {
+    const response = await sendRuntimeMessage<SubmitAiOperationPackageResponse>({
+      type: "SUBMIT_AI_OPERATION_PACKAGE",
+      payload: operationPackage,
+    });
+
+    queued = response.queued;
+
+    if (!response.queued) {
+      setButtonError(button);
+    }
+  } catch {
+    setButtonError(button);
+  } finally {
+    button.disabled = false;
+
+    if (queued) {
+      button.classList.add("is-saved");
+    }
+  }
+}
+
 function updateSelectionButton(button: HTMLButtonElement): void {
   const selection = window.getSelection();
   const extracted = extractSelectionFromDocument(selection);
@@ -290,6 +398,10 @@ function updateSelectionButton(button: HTMLButtonElement): void {
 
 function getMessageButton(container: HTMLElement): HTMLButtonElement | null {
   return container.querySelector<HTMLButtonElement>(`.${BUTTON_CLASS}[${ACTION_ATTRIBUTE}="export-message"]`);
+}
+
+function getAiOperationsButton(container: HTMLElement): HTMLButtonElement | null {
+  return container.querySelector<HTMLButtonElement>(`.${BUTTON_CLASS}[${ACTION_ATTRIBUTE}="review-ai-ops"]`);
 }
 
 function getUsefulRangeRect(range: Range): DOMRect | null {
@@ -323,6 +435,11 @@ function setButtonError(button: HTMLButtonElement): void {
 }
 
 function setButtonContent(button: HTMLButtonElement): void {
+  if (button.getAttribute(ACTION_ATTRIBUTE) === "review-ai-ops") {
+    button.textContent = AI_OPS_LABEL;
+    return;
+  }
+
   button.replaceChildren();
 
   const icon = document.createElement("img");

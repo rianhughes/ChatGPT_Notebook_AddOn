@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 
 import "../styles/sidebar.css";
+import { applyAiOperationPackage } from "../core/aiOperations";
+import { AI_OPERATIONS_BLOCK_LANGUAGE, summarizeAiOperation } from "../core/aiOperationProtocol";
 import type {
   ActiveChatGptContextResponse,
   ActiveSaveTargetResponse,
@@ -19,7 +21,7 @@ import type {
 } from "../core/ports";
 import { getMessageCopyText } from "../core/clipboard";
 import { contentHashFromParts, createId } from "../core/hash";
-import type { ChatGptThread, NotebookFolder, SavedMessage } from "../core/models";
+import type { AiNotebookOperation, AiOperationProposal, ChatGptThread, NotebookFolder, SavedMessage } from "../core/models";
 import {
   convertSelectedTextToHeadingInMarkdown,
   deleteHeadingSectionFromMarkdown,
@@ -39,11 +41,13 @@ import {
   appendMessage,
   createNotebook,
   createFolder,
+  deleteAiOperationProposal,
   deleteFolder,
   deleteMessage,
   deleteSelectedTextFromMessage,
   deleteThread,
   getFolders,
+  getAiOperationProposals,
   getMessagesInOrder,
   getThreadBySource,
   getThreads,
@@ -113,6 +117,7 @@ function App() {
   const defaultCollapsedThreadIdRef = useRef<string | null>(null);
   const knownDefaultCollapsedMessageIdsRef = useRef<Set<string>>(new Set());
   const [isNotebookToolsOpen, setIsNotebookToolsOpen] = useState(false);
+  const [aiOperationProposals, setAiOperationProposals] = useState<AiOperationProposal[]>([]);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
@@ -134,6 +139,7 @@ function App() {
   );
   const canUndoNotebook = Boolean(selectedThreadId && notebookUndoHistory[selectedThreadId]?.length);
   const canUndoDeletedMessage = Boolean(lastDeletedMessage && lastDeletedMessage.threadId === selectedThreadId);
+  const pendingAiOperationProposal = aiOperationProposals[0] ?? null;
 
   useEffect(() => {
     applyTheme(theme);
@@ -152,6 +158,12 @@ function App() {
     return nextFolders;
   }, []);
 
+  const loadAiOperationProposals = useCallback(async () => {
+    const proposals = await getAiOperationProposals();
+    setAiOperationProposals(proposals);
+    return proposals;
+  }, []);
+
   const loadMessages = useCallback(async (threadId: string | null) => {
     if (!threadId) {
       setMessages([]);
@@ -163,7 +175,7 @@ function App() {
 
   useEffect(() => {
     void (async () => {
-      await Promise.all([loadThreads(), loadFolders()]);
+      await Promise.all([loadThreads(), loadFolders(), loadAiOperationProposals()]);
 
       try {
         const activeSaveTarget = await sendRuntimeMessage<ActiveSaveTargetResponse>({
@@ -199,7 +211,7 @@ function App() {
 
       setSelectedThreadId(null);
     })();
-  }, [loadFolders, loadThreads]);
+  }, [loadAiOperationProposals, loadFolders, loadThreads]);
 
   useEffect(() => {
     setSelectedMergeMessageIds((current) => {
@@ -251,6 +263,7 @@ function App() {
     const intervalId = window.setInterval(() => {
       void loadThreads();
       void loadFolders();
+      void loadAiOperationProposals();
 
       if (isNotebookDetailVisible) {
         void loadMessages(selectedThreadId);
@@ -258,7 +271,7 @@ function App() {
     }, 1500);
 
     return () => window.clearInterval(intervalId);
-  }, [isNotebookDetailVisible, loadFolders, loadMessages, loadThreads, selectedThreadId]);
+  }, [isNotebookDetailVisible, loadAiOperationProposals, loadFolders, loadMessages, loadThreads, selectedThreadId]);
 
   function resetCollapsedMessages() {
     defaultCollapsedThreadIdRef.current = null;
@@ -600,6 +613,70 @@ function App() {
       await loadThreads();
     } catch {
       setError("Could not create note.");
+    }
+  }
+
+  async function insertEditableNotebookContext() {
+    setError("");
+    setStatus("");
+
+    if (!selectedThread) {
+      setError("Select a notebook first.");
+      return;
+    }
+
+    const orderedMessages = await getMessagesInOrder(selectedThread.id);
+
+    await runChatGptInsertAction(
+      createEditableNotebookContext(selectedThread, orderedMessages, folders),
+      "Inserted editable notebook context into ChatGPT",
+    );
+  }
+
+  async function applyAiProposal(proposal: AiOperationProposal) {
+    setError("");
+    setStatus("");
+
+    const undoSnapshot = proposalTouchesThread(proposal, selectedThreadId)
+      ? createNotebookUndoSnapshot(selectedThreadId)
+      : null;
+
+    try {
+      const result = await applyAiOperationPackage(proposal.package);
+      await deleteAiOperationProposal(proposal.id);
+      pushNotebookUndoSnapshot(result.appliedCount > 0 ? undoSnapshot : null);
+
+      const nextThreads = await loadThreads();
+      await Promise.all([loadFolders(), loadAiOperationProposals()]);
+
+      if (selectedThreadId && !nextThreads.some((thread) => thread.id === selectedThreadId)) {
+        setSelectedThreadId(null);
+        setIsNotebookOpen(false);
+        await loadMessages(null);
+      } else if (selectedThreadId) {
+        await loadMessages(selectedThreadId);
+      }
+
+      setStatus(`Applied ${result.appliedCount} ChatGPT ${result.appliedCount === 1 ? "change" : "changes"}`);
+
+      if (result.errors.length > 0) {
+        setError(result.errors[0]);
+      }
+    } catch {
+      setError("Could not apply ChatGPT note changes.");
+    }
+  }
+
+  async function dismissAiProposal(proposal: AiOperationProposal) {
+    setError("");
+    setStatus("");
+
+    try {
+      await deleteAiOperationProposal(proposal.id);
+      await loadAiOperationProposals();
+      setStatus("Dismissed ChatGPT note changes");
+    } catch {
+      setError("Could not dismiss ChatGPT note changes.");
     }
   }
 
@@ -1182,6 +1259,7 @@ function App() {
             onRequestExport={(formatId) => void exportSelectedNotebook(formatId)}
             onRequestPrintExport={() => void printSelectedNotebookAsPdf()}
             onCreateNote={() => void createNoteInSelectedNotebook()}
+            onInsertEditableContext={() => void insertEditableNotebookContext()}
             onUndoNotebook={() => void undoNotebookChange()}
             onOpenStandaloneWindow={() => void openStandaloneWindow()}
             onStartMergeSelection={startMergeSelection}
@@ -1194,6 +1272,13 @@ function App() {
               {status ? <span className="copy-status">{status}</span> : null}
               {error ? <span className="error-text">{error}</span> : null}
             </div>
+            {pendingAiOperationProposal ? (
+              <AiOperationProposalReview
+                proposal={pendingAiOperationProposal}
+                onApply={() => void applyAiProposal(pendingAiOperationProposal)}
+                onDismiss={() => void dismissAiProposal(pendingAiOperationProposal)}
+              />
+            ) : null}
             <MessageList
               messages={visibleMessages}
               undoableMessageIds={undoableMessageIds}
@@ -1251,10 +1336,61 @@ function App() {
             onDeleteThread={(thread) => void removeThread(thread)}
             onDeleteFolder={(folder) => void removeFolder(folder)}
           />
+          {pendingAiOperationProposal ? (
+            <AiOperationProposalReview
+              proposal={pendingAiOperationProposal}
+              onApply={() => void applyAiProposal(pendingAiOperationProposal)}
+              onDismiss={() => void dismissAiProposal(pendingAiOperationProposal)}
+            />
+          ) : null}
           {feedback}
         </section>
       )}
     </main>
+  );
+}
+
+type AiOperationProposalReviewProps = {
+  proposal: AiOperationProposal;
+  onApply(): void;
+  onDismiss(): void;
+};
+
+function AiOperationProposalReview({ proposal, onApply, onDismiss }: AiOperationProposalReviewProps) {
+  const operations = proposal.package.operations;
+  const visibleOperations = operations.slice(0, 8);
+  const remainingCount = operations.length - visibleOperations.length;
+
+  return (
+    <section className="ai-proposal-panel" aria-label="ChatGPT proposed note changes">
+      <div className="ai-proposal-header">
+        <div className="ai-proposal-copy">
+          <h2 className="ai-proposal-title">ChatGPT proposed note changes</h2>
+          <p className="ai-proposal-meta">
+            {operations.length} {operations.length === 1 ? "operation" : "operations"} from {proposal.sourceTitle}
+          </p>
+        </div>
+        <div className="ai-proposal-actions">
+          <button className="tool-button secondary" type="button" onClick={onDismiss}>
+            Dismiss
+          </button>
+          <button className="tool-button" type="button" onClick={onApply}>
+            Apply all
+          </button>
+        </div>
+      </div>
+      <ul className="ai-proposal-list">
+        {visibleOperations.map((operation, index) => (
+          <li key={`${operation.type}-${index}`} className="ai-proposal-item">
+            <span className="ai-proposal-item-type">{operation.type.replace(/_/g, " ")}</span>
+            <span className="ai-proposal-item-summary">{summarizeAiOperation(operation)}</span>
+          </li>
+        ))}
+        {remainingCount > 0 ? (
+          <li className="ai-proposal-item ai-proposal-item-muted">{remainingCount} more operations</li>
+        ) : null}
+      </ul>
+    </section>
   );
 }
 
@@ -1278,4 +1414,84 @@ function getStoredMessageMarkdown(message: SavedMessage): string {
 
 function normalizeNotebookTitle(title: string | null | undefined): string {
   return (title ?? "").replace(/\s+/g, " ").trim();
+}
+
+function createEditableNotebookContext(
+  thread: ChatGptThread,
+  messages: SavedMessage[],
+  folders: NotebookFolder[],
+): string {
+  const notebook = {
+    id: thread.id,
+    title: thread.title,
+    folderId: thread.folderId ?? null,
+    notes: messages.map((message) => ({
+      id: message.id,
+      title: message.title ?? null,
+      role: message.role,
+      contentHash: message.contentHash,
+      contentMarkdown: message.contentMarkdown || message.contentText,
+    })),
+    folders: folders.map((folder) => ({ id: folder.id, title: folder.title })),
+  };
+
+  return [
+    "You may propose edits to this ChatGPT Notes notebook. Use the exact notebook, folder, and note IDs below.",
+    "When you want the extension to modify notes, return only a fenced JSON block using this format:",
+    "",
+    `\`\`\`${AI_OPERATIONS_BLOCK_LANGUAGE}`,
+    JSON.stringify(
+      {
+        protocolVersion: 1,
+        requestId: "short-human-readable-id",
+        operations: [
+          {
+            type: "update_note",
+            threadId: thread.id,
+            messageId: "note-id",
+            expectedContentHash: "current-content-hash",
+            contentMarkdown: "replacement markdown",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    "```",
+    "",
+    "Prefer update_note and create_note for ordinary edits. Include expectedContentHash for update_note and delete_note.",
+    "",
+    "Editable notebook context:",
+    "```json",
+    JSON.stringify(notebook, null, 2),
+    "```",
+  ].join("\n");
+}
+
+function proposalTouchesThread(proposal: AiOperationProposal, threadId: string | null): boolean {
+  if (!threadId) {
+    return false;
+  }
+
+  return proposal.package.operations.some((operation) => getOperationThreadId(operation) === threadId);
+}
+
+function getOperationThreadId(operation: AiNotebookOperation): string | null {
+  switch (operation.type) {
+    case "create_note":
+    case "update_note":
+    case "delete_note":
+    case "move_note":
+    case "merge_notes":
+    case "rename_notebook":
+    case "delete_notebook":
+    case "move_notebook_to_folder":
+      return operation.threadId;
+    case "create_notebook":
+    case "create_folder":
+    case "rename_folder":
+      return null;
+    default:
+      return null;
+  }
 }

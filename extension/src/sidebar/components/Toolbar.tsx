@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  Bot,
   Check,
   FileDown,
   Merge,
@@ -30,6 +31,7 @@ type ToolbarProps = {
   onRequestExport(formatId: NotebookExportFormatId): void;
   onRequestPrintExport(): void;
   onCreateNote(): void;
+  onInsertEditableContext(): void;
   onUndoNotebook(): void;
   onOpenStandaloneWindow(): void;
   onStartMergeSelection(): void;
@@ -52,6 +54,7 @@ export function Toolbar({
   onRequestExport,
   onRequestPrintExport,
   onCreateNote,
+  onInsertEditableContext,
   onUndoNotebook,
   onOpenStandaloneWindow,
   onStartMergeSelection,
@@ -172,6 +175,17 @@ export function Toolbar({
                 >
                   <Plus size={16} aria-hidden="true" />
                   New note
+                </button>
+                <button
+                  className="tool-button secondary selected-thread-ai-context-button"
+                  type="button"
+                  title="Send editable notebook context to ChatGPT"
+                  aria-label="Send editable notebook context to ChatGPT"
+                  disabled={!selectedThread}
+                  onClick={onInsertEditableContext}
+                >
+                  <Bot size={16} aria-hidden="true" />
+                  AI context
                 </button>
                 {mergeMode ? (
                   <>

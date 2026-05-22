@@ -1,5 +1,11 @@
 import type { ChatGptContext } from "./threadIdentity";
-import type { ChatGptThread, MessageRole, SaveChatGptMessageInput, SaveMessageStatus } from "./models";
+import type {
+  AiOperationPackage,
+  ChatGptThread,
+  MessageRole,
+  SaveChatGptMessageInput,
+  SaveMessageStatus,
+} from "./models";
 
 export type RuntimeMessageType =
   | "CHATGPT_THREAD_CHANGED"
@@ -11,6 +17,7 @@ export type RuntimeMessageType =
   | "ACTIVE_SAVE_TARGET_CHANGED"
   | "OPEN_SIDEBAR_WINDOW"
   | "INSERT_TEXT_IN_CHATGPT"
+  | "SUBMIT_AI_OPERATION_PACKAGE"
   | "SOURCE_MESSAGE_SAVED_STATE_CHANGED"
   | "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES";
 
@@ -68,6 +75,11 @@ export type OpenSidebarWindowMessage = {
   payload: Record<string, never>;
 };
 
+export type SubmitAiOperationPackageMessage = {
+  type: "SUBMIT_AI_OPERATION_PACKAGE";
+  payload: AiOperationPackage;
+};
+
 export type SourceMessageSavedStateChangedMessage = {
   type: "SOURCE_MESSAGE_SAVED_STATE_CHANGED";
   payload: {
@@ -95,6 +107,7 @@ export type ExtensionMessage =
   | ActiveSaveTargetChangedMessage
   | OpenSidebarWindowMessage
   | InsertTextInChatGptMessage
+  | SubmitAiOperationPackageMessage
   | SourceMessageSavedStateChangedMessage
   | RequestSavedStateForVisibleMessagesMessage;
 
@@ -118,6 +131,12 @@ export type InsertTextInChatGptResponse = {
 
 export type OpenSidebarWindowResponse = {
   opened: boolean;
+  error?: string;
+};
+
+export type SubmitAiOperationPackageResponse = {
+  queued: boolean;
+  proposalId?: string;
   error?: string;
 };
 
@@ -160,6 +179,8 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
       return true;
     case "INSERT_TEXT_IN_CHATGPT":
       return typeof value.payload.text === "string";
+    case "SUBMIT_AI_OPERATION_PACKAGE":
+      return isAiOperationPackage(value.payload);
     case "SOURCE_MESSAGE_SAVED_STATE_CHANGED":
       return (
         typeof value.payload.sourceThreadId === "string" &&
@@ -199,6 +220,17 @@ function isMessageRole(value: unknown): value is Extract<MessageRole, "assistant
 
 function isSaveStatus(value: unknown): value is SaveMessageStatus {
   return value === "created" || value === "already_saved" || value === "updated";
+}
+
+function isAiOperationPackage(value: Record<string, unknown>): value is AiOperationPackage {
+  return (
+    value.protocolVersion === 1 &&
+    typeof value.requestId === "string" &&
+    typeof value.sourceThreadId === "string" &&
+    typeof value.sourceTitle === "string" &&
+    Array.isArray(value.operations) &&
+    value.operations.length > 0
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

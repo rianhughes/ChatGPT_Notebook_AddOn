@@ -10,12 +10,14 @@ import {
   type InsertTextInChatGptResponse,
   type OpenSidebarWindowResponse,
   type SaveChatGptMessageResponse,
+  type SubmitAiOperationPackageResponse,
   isExtensionMessage,
 } from "../core/ports";
 import {
   appendSavedMessageFromChatGpt,
   getActiveSaveTargetThread,
   getSavedStateForVisibleMessages,
+  saveAiOperationProposal,
   setActiveSaveTargetThread,
 } from "../core/repository";
 import { createSidebarAdapter } from "./sidebarAdapter";
@@ -106,6 +108,27 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
           error: "Open a ChatGPT tab before inserting notes.",
         }
       );
+    }
+    case "SUBMIT_AI_OPERATION_PACKAGE": {
+      try {
+        const proposal = await saveAiOperationProposal(message.payload);
+
+        try {
+          await openDetachedSidebarWindow();
+        } catch {
+          await sidebarAdapter.openForCurrentWindow({});
+        }
+
+        return {
+          queued: true,
+          proposalId: proposal.id,
+        } satisfies SubmitAiOperationPackageResponse;
+      } catch {
+        return {
+          queued: false,
+          error: "Could not queue ChatGPT note changes.",
+        } satisfies SubmitAiOperationPackageResponse;
+      }
     }
     case "OPEN_SIDEBAR_WINDOW": {
       try {
