@@ -1,4 +1,4 @@
-import { Copy, ListCollapse, Pencil, SendHorizontal, Trash2, Undo2, UnfoldVertical } from "lucide-react";
+import { Heading2, ListCollapse, Pencil, SendHorizontal, Trash2, Undo2, UnfoldVertical } from "lucide-react";
 
 import type { SavedMessage } from "../../core/models";
 
@@ -6,12 +6,14 @@ type MessageActionsProps = {
   message: SavedMessage;
   isEditing: boolean;
   areHeadingsCollapsed: boolean;
+  hasActiveHeadingSection: boolean;
   hasHighlightedSelection: boolean;
   canUndoMessageEdit: boolean;
   canUndoDeletedMessage: boolean;
   onToggleHeadings(message: SavedMessage): void;
   onInsertMessage(message: SavedMessage): void;
-  onCopyMessage(message: SavedMessage): void;
+  onMakeSelectionHeading(message: SavedMessage): void;
+  onUnmakeHeadingSection(message: SavedMessage): void;
   onEditMessage(message: SavedMessage): void;
   onDeleteMessage(message: SavedMessage): void;
   onUndoMessageEdit(message: SavedMessage): void;
@@ -22,12 +24,14 @@ export function MessageActions({
   message,
   isEditing,
   areHeadingsCollapsed,
+  hasActiveHeadingSection,
   hasHighlightedSelection,
   canUndoMessageEdit,
   canUndoDeletedMessage,
   onToggleHeadings,
   onInsertMessage,
-  onCopyMessage,
+  onMakeSelectionHeading,
+  onUnmakeHeadingSection,
   onEditMessage,
   onDeleteMessage,
   onUndoMessageEdit,
@@ -36,6 +40,12 @@ export function MessageActions({
   const undoTitle = canUndoDeletedMessage ? "Undo deleted note" : "Undo last note edit";
   const canUndo = canUndoDeletedMessage || canUndoMessageEdit;
   const insertTitle = hasHighlightedSelection ? "Insert highlighted text into ChatGPT" : "Insert into ChatGPT";
+  const editTitle = hasHighlightedSelection ? "Edit highlighted text" : isEditing ? "Close editor" : "Edit message";
+  const headingTitle = hasActiveHeadingSection
+    ? "Unmake selected collapsible header"
+    : hasHighlightedSelection
+      ? "Make highlighted text a collapsible header"
+      : "Highlight text to make a collapsible header";
 
   return (
     <div className="message-actions">
@@ -53,20 +63,25 @@ export function MessageActions({
         )}
       </button>
       <button
-        className="icon-button"
+        className={`icon-button message-heading-button${hasActiveHeadingSection ? " is-active" : ""}${
+          hasHighlightedSelection ? " has-highlighted-selection" : ""
+        }`}
         type="button"
-        title="Copy message"
-        aria-label="Copy message"
+        title={headingTitle}
+        aria-label={headingTitle}
         onMouseDown={(event) => event.preventDefault()}
-        onClick={() => onCopyMessage(message)}
+        onClick={() => (hasActiveHeadingSection ? onUnmakeHeadingSection(message) : onMakeSelectionHeading(message))}
       >
-        <Copy size={16} aria-hidden="true" />
+        <Heading2 size={16} aria-hidden="true" />
       </button>
       <button
-        className={`icon-button${isEditing ? " is-active" : ""}`}
+        className={`icon-button message-edit-button${isEditing ? " is-active" : ""}${
+          hasHighlightedSelection ? " has-highlighted-selection" : ""
+        }`}
         type="button"
-        title={isEditing ? "Close editor" : "Edit message"}
-        aria-label={isEditing ? "Close editor" : "Edit message"}
+        title={editTitle}
+        aria-label={editTitle}
+        onMouseDown={(event) => event.preventDefault()}
         onClick={() => onEditMessage(message)}
       >
         <Pencil size={16} aria-hidden="true" />

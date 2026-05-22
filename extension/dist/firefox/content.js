@@ -1163,11 +1163,18 @@ ${normalizeForKey(input.contentText)}`);
       return null;
     }
   }
+  const SECTION_BOUNDARY_MARKER = "cgpt-notes-section-boundary";
   function markdownToPlainText(markdown) {
-    return markdown.replace(
+    return markdown.replace(getSectionBoundaryLinePattern("gm"), "").replace(
       /```[\s\S]*?```/g,
       (block) => block.replace(/^```[^\n]*\n?/, "").replace(/\n?```$/, "").trim()
     ).replace(/`([^`]+)`/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/^\s{0,3}#{1,6}\s+/gm, "").replace(/^\s*[-*]\s+/gm, "").replace(/\s+/g, " ").trim();
+  }
+  function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function getSectionBoundaryLinePattern(flags = "") {
+    return new RegExp(`^\\s*<!--\\s*${escapeRegExp(SECTION_BOUNDARY_MARKER)}(?::[1-6])?\\s*-->\\s*$`, flags);
   }
   const BLOCK_TAGS = /* @__PURE__ */ new Set([
     "ADDRESS",

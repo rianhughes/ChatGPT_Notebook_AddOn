@@ -1,3 +1,10 @@
+export const NOTE_SELECTION_DRAG_TYPE = "application/x-chatgpt-notes-selection";
+
+export type NoteSelectionDragPayload = {
+  messageId: string;
+  text: string;
+};
+
 export function getHighlightedText(selection: Selection | null, container: HTMLElement | null): string | null {
   if (!selection || selection.isCollapsed || !container || !selectionBelongsToElement(selection, container)) {
     return null;
@@ -39,6 +46,26 @@ export function selectionBelongsToElement(selection: Selection, element: HTMLEle
       element.contains(selection.anchorNode) &&
       element.contains(selection.focusNode),
   );
+}
+
+export function encodeNoteSelectionDragPayload(payload: NoteSelectionDragPayload): string {
+  return JSON.stringify(payload);
+}
+
+export function parseNoteSelectionDragPayload(value: string): NoteSelectionDragPayload | null {
+  try {
+    const parsed = JSON.parse(value) as Partial<NoteSelectionDragPayload>;
+    const messageId = typeof parsed.messageId === "string" ? parsed.messageId : "";
+    const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
+
+    return messageId && text ? { messageId, text } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function hasNoteSelectionDragData(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types).includes(NOTE_SELECTION_DRAG_TYPE);
 }
 
 function getElementForNode(node: Node): Element | null {

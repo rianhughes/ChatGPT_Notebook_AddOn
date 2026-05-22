@@ -8,7 +8,7 @@ For prettier notes, we recommend asking ChatGPT to output responses in Markdown.
 
 ## Firefox Installation
 
-This project supports Firefox as a temporary/debug extension.
+ChatGPT Notes Sidebar is not available in Firefox Add-ons yet. Until then Firefox can only install it temporarily as a development/debug add-on. The Firefox instructions below are for this temporary setup.
 
 1. Download or clone this repo.
 2. Open Firefox and go to:
@@ -28,7 +28,7 @@ Temporary add-ons are removed when Firefox restarts, so repeat the loading step 
 
 ## Chrome Installation
 
-This project supports Chrome as an unpacked development extension. A ready-to-load Chrome build is included at `extension/dist/chrome`.
+ChatGPT Notes Sidebar is not available in the Chrome Web Store yet. For now, Chrome support is available as an unpacked development extension. A ready-to-load Chrome build is included at `extension/dist/chrome`.
 
 1. Download or clone this repo.
 2. Open Chrome and go to:

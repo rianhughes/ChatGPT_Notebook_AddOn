@@ -17,10 +17,17 @@ import type {
   InsertTextInChatGptResponse,
   OpenSidebarWindowResponse,
 } from "../core/ports";
-import { copyText, getMessageCopyText } from "../core/clipboard";
+import { getMessageCopyText } from "../core/clipboard";
 import { contentHashFromParts, createId } from "../core/hash";
 import type { ChatGptThread, NotebookFolder, SavedMessage } from "../core/models";
-import { deleteHeadingSectionFromMarkdown, extractHeadingSectionFromMarkdown } from "../core/markdown";
+import {
+  convertSelectedTextToHeadingInMarkdown,
+  deleteHeadingSectionFromMarkdown,
+  extractHeadingSectionFromMarkdown,
+  moveSelectedTextToHeadingSectionInMarkdown,
+  replaceSelectedTextInMarkdown,
+  unmakeHeadingSectionInMarkdown,
+} from "../core/markdown";
 import {
   createNotebookExportData,
   createNotebookExportFile,
@@ -53,7 +60,7 @@ import {
 import { filterMessagesBySearch } from "../core/search";
 import { sendRuntimeMessage } from "../browser/runtime";
 import { MessageList } from "./components/MessageList";
-import { getHighlightedInsertText, getHighlightedText, selectionBelongsToElement } from "./insertSelection";
+import { getHighlightedInsertText, selectionBelongsToElement, type NoteSelectionDragPayload } from "./insertSelection";
 import { syncDefaultCollapsedMessageIds } from "./noteCollapseDefaults";
 import type { ThemeMode } from "./theme";
 import { applyTheme, getInitialTheme, getNextTheme, persistTheme } from "./theme";
@@ -679,14 +686,6 @@ function App() {
     }
   }
 
-  async function copyMessage(message: SavedMessage) {
-    const highlightedText = getHighlightedText(window.getSelection(), getMessageElement(message.id));
-    await runClipboardAction(
-      highlightedText ?? getMessageCopyText(message),
-      highlightedText ? "Copied highlighted text" : "Copied message",
-    );
-  }
-
   async function insertMessageIntoChatGpt(message: SavedMessage) {
     const highlightedText = getHighlightedInsertText(window.getSelection(), getMessageElement(message.id));
     const text = highlightedText ?? getMessageCopyText(message);
@@ -709,6 +708,141 @@ function App() {
     }
 
     await runChatGptInsertAction(sectionMarkdown, "Inserted section into ChatGPT");
+  }
+
+  async function makeSelectedTextHeading(message: SavedMessage) {
+    setError("");
+    setStatus("");
+
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim() ?? "";
+    const messageElement = getMessageElement(message.id);
+
+    if (!selection || selection.isCollapsed || !selectedText) {
+      setError("Highlight text inside this note first.");
+      return;
+    }
+
+    if (!messageElement || !selectionBelongsToElement(selection, messageElement)) {
+      setError("Highlighted text must be inside this note.");
+      return;
+    }
+
+    const previousMarkdown = getStoredMessageMarkdown(message);
+    const nextMarkdown = convertSelectedTextToHeadingInMarkdown(previousMarkdown, selectedText, 2);
+
+    if (!nextMarkdown || nextMarkdown === previousMarkdown) {
+      setError("That highlight could not be turned into a header.");
+      return;
+    }
+
+    const undoSnapshot = createNotebookUndoSnapshot(message.threadId);
+
+    try {
+      await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      pushMessageUndoSnapshot(message.id, previousMarkdown);
+      pushNotebookUndoSnapshot(undoSnapshot);
+      selection.removeAllRanges();
+      setStatus("Made highlighted text a collapsible header");
+      await loadMessages(message.threadId);
+      await loadThreads();
+    } catch {
+      setError("Could not update note.");
+    }
+  }
+
+  async function moveSelectedTextToSection(
+    message: SavedMessage,
+    headingIndex: number,
+    selection: NoteSelectionDragPayload,
+  ) {
+    setError("");
+    setStatus("");
+
+    if (selection.messageId !== message.id) {
+      setError("Drag highlighted text within the same note.");
+      return;
+    }
+
+    const previousMarkdown = getStoredMessageMarkdown(message);
+    const nextMarkdown = moveSelectedTextToHeadingSectionInMarkdown(previousMarkdown, selection.text, headingIndex);
+
+    if (!nextMarkdown || nextMarkdown === previousMarkdown) {
+      setError("That highlight could not be moved into this section.");
+      return;
+    }
+
+    const undoSnapshot = createNotebookUndoSnapshot(message.threadId);
+
+    try {
+      await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      pushMessageUndoSnapshot(message.id, previousMarkdown);
+      pushNotebookUndoSnapshot(undoSnapshot);
+      window.getSelection()?.removeAllRanges();
+      setStatus("Moved highlighted text into section");
+      await loadMessages(message.threadId);
+      await loadThreads();
+    } catch {
+      setError("Could not update note.");
+    }
+  }
+
+  async function unmakeMessageHeadingSection(message: SavedMessage, headingIndex: number) {
+    setError("");
+    setStatus("");
+
+    const previousMarkdown = getStoredMessageMarkdown(message);
+    const nextMarkdown = unmakeHeadingSectionInMarkdown(previousMarkdown, headingIndex);
+
+    if (!nextMarkdown || nextMarkdown === previousMarkdown) {
+      setError("Could not remove that header.");
+      return;
+    }
+
+    const undoSnapshot = createNotebookUndoSnapshot(message.threadId);
+
+    try {
+      await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      pushMessageUndoSnapshot(message.id, previousMarkdown);
+      pushNotebookUndoSnapshot(undoSnapshot);
+      setStatus("Removed collapsible header");
+      await loadMessages(message.threadId);
+      await loadThreads();
+    } catch {
+      setError("Could not update note.");
+    }
+  }
+
+  async function saveSelectedTextEdit(message: SavedMessage, selectedText: string, replacementText: string) {
+    setError("");
+    setStatus("");
+
+    const previousMarkdown = getStoredMessageMarkdown(message);
+    const nextMarkdown = replaceSelectedTextInMarkdown(previousMarkdown, selectedText, replacementText);
+
+    if (nextMarkdown === null) {
+      setError("That highlight could not be matched in the stored note.");
+      return;
+    }
+
+    if (nextMarkdown === previousMarkdown) {
+      setStatus("");
+      return;
+    }
+
+    const undoSnapshot = createNotebookUndoSnapshot(message.threadId);
+
+    try {
+      await updateMessageContent(message.threadId, message.id, nextMarkdown);
+      pushMessageUndoSnapshot(message.id, previousMarkdown);
+      pushNotebookUndoSnapshot(undoSnapshot);
+      window.getSelection()?.removeAllRanges();
+      setStatus("Updated highlighted text");
+      await loadMessages(message.threadId);
+      await loadThreads();
+    } catch {
+      setError("Could not update note.");
+    }
   }
 
   async function saveMessageEdit(message: SavedMessage, title: string, contentMarkdown: string) {
@@ -927,24 +1061,6 @@ function App() {
     });
   }
 
-  async function runClipboardAction(text: string, successMessage: string) {
-    setError("");
-
-    if (!text.trim()) {
-      setStatus("");
-      setError("Nothing to copy.");
-      return;
-    }
-
-    try {
-      await copyText(text);
-      setStatus(successMessage);
-    } catch {
-      setStatus("");
-      setError("Clipboard access failed.");
-    }
-  }
-
   async function runChatGptInsertAction(text: string, successMessage: string) {
     setError("");
     setStatus("");
@@ -1089,10 +1205,19 @@ function App() {
               onCollapsedMessageIdsChange={setCollapsedMessageIds}
               onToggleMessageSelection={toggleMergeMessageSelection}
               onMoveMessageAfter={(message, afterMessageId) => void moveMessageAfter(message, afterMessageId)}
-              onCopyMessage={copyMessage}
+              onMakeSelectionHeading={(message) => void makeSelectedTextHeading(message)}
               onInsertMessage={insertMessageIntoChatGpt}
               onInsertMessageSection={(message, headingIndex) =>
                 void insertMessageSectionIntoChatGpt(message, headingIndex)
+              }
+              onUnmakeHeadingSection={(message, headingIndex) =>
+                void unmakeMessageHeadingSection(message, headingIndex)
+              }
+              onMoveSelectedTextToSection={(message, headingIndex, selection) =>
+                void moveSelectedTextToSection(message, headingIndex, selection)
+              }
+              onSaveSelectedTextEdit={(message, selectedText, replacementText) =>
+                saveSelectedTextEdit(message, selectedText, replacementText)
               }
               onSaveMessageEdit={saveMessageEdit}
               onDeleteMessage={(message) => void deleteSingleMessage(message)}

@@ -800,12 +800,16 @@ button {
   color: #ffffff;
 }
 
+.message-edit-button,
+.message-heading-button,
 .message-insert-button {
   transition:
     background-color 140ms ease,
     color 140ms ease;
 }
 
+.message-edit-button.has-highlighted-selection,
+.message-heading-button.has-highlighted-selection,
 .message-insert-button.has-highlighted-selection {
   background: var(--color-accent);
   color: var(--color-accent-text);
@@ -1038,6 +1042,44 @@ button {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
 }
 
+.message-selection-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--color-edit-bg);
+}
+
+.message-selection-editor-textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  border: 1px solid var(--color-input-border);
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: var(--color-edit-bg);
+  color: var(--color-text);
+  font-family: var(--font-prose);
+  font-size: 15px;
+  line-height: 1.6;
+  outline: none;
+  white-space: pre-wrap;
+}
+
+.message-selection-editor-textarea:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.message-selection-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  align-items: center;
+}
+
 .rendered-message {
   display: grid;
   gap: 12px;
@@ -1146,7 +1188,9 @@ button {
 }
 
 .markdown-heading-row:hover,
-.markdown-heading-row:focus-within {
+.markdown-heading-row:focus-within,
+.markdown-heading.is-selected .markdown-heading-row,
+.markdown-heading.is-drop-target .markdown-heading-row {
   border-color: color-mix(in srgb, var(--color-accent) 32%, var(--color-border));
   background: var(--color-hover);
 }

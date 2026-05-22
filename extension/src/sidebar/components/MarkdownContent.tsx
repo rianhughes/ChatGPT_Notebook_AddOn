@@ -5,12 +5,20 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
 } from "react";
 
 import { copyText } from "../../core/clipboard";
+import { SECTION_BOUNDARY_MARKER } from "../../core/markdown";
+import {
+  hasNoteSelectionDragData,
+  NOTE_SELECTION_DRAG_TYPE,
+  parseNoteSelectionDragPayload,
+  type NoteSelectionDragPayload,
+} from "../insertSelection";
 
 type SourceRange = {
   start: number;
@@ -33,27 +41,35 @@ type MarkdownBlock =
       range: SourceRange;
     }
   | { type: "list"; key: string; items: string[]; range: SourceRange }
-  | { type: "paragraph"; key: string; content: string; range: SourceRange };
+  | { type: "paragraph"; key: string; content: string; range: SourceRange }
+  | { type: "boundary"; key: string; level: number | null; range: SourceRange };
 
 type MarkdownContentProps = {
   markdown: string;
   collapseAllHeadings?: boolean;
+  selectedHeadingIndex?: number | null;
   onInsertSection?(headingIndex: number): void;
   onDeleteSection?(headingIndex: number): void;
+  onSelectHeadingSection?(headingIndex: number): void;
+  onMoveSelectionToSection?(headingIndex: number, selection: NoteSelectionDragPayload): void;
   onMarkdownChange?(markdown: string): void | Promise<void>;
 };
 
 export function MarkdownContent({
   markdown,
   collapseAllHeadings = false,
+  selectedHeadingIndex = null,
   onInsertSection,
   onDeleteSection,
+  onSelectHeadingSection,
+  onMoveSelectionToSection,
   onMarkdownChange,
 }: MarkdownContentProps) {
   const normalizedMarkdown = useMemo(() => markdown.replace(/\r\n/g, "\n"), [markdown]);
   const blocks = useMemo(() => parseMarkdownBlocks(normalizedMarkdown), [normalizedMarkdown]);
   const [collapsedHeadingKeys, setCollapsedHeadingKeys] = useState<Set<string>>(() => new Set());
   const [editingBlockKey, setEditingBlockKey] = useState<string | null>(null);
+  const [dropTargetHeadingKey, setDropTargetHeadingKey] = useState<string | null>(null);
   const [inlineDraftValue, setInlineDraftValue] = useState("");
   const [isSavingInlineEdit, setIsSavingInlineEdit] = useState(false);
   const collapseAllHeadingsAppliedRef = useRef(false);
@@ -111,6 +127,42 @@ export function MarkdownContent({
 
       return next;
     });
+  }
+
+  function handleHeadingDragOver(block: Extract<MarkdownBlock, { type: "heading" }>, event: DragEvent<HTMLElement>) {
+    if (!onMoveSelectionToSection || !hasNoteSelectionDragData(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetHeadingKey((current) => (current === block.key ? current : block.key));
+  }
+
+  function handleHeadingDragLeave(block: Extract<MarkdownBlock, { type: "heading" }>, event: DragEvent<HTMLElement>) {
+    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+
+    if (nextTarget && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    setDropTargetHeadingKey((current) => (current === block.key ? null : current));
+  }
+
+  function handleHeadingDrop(block: Extract<MarkdownBlock, { type: "heading" }>, event: DragEvent<HTMLElement>) {
+    if (!onMoveSelectionToSection) {
+      return;
+    }
+
+    const selection = parseNoteSelectionDragPayload(event.dataTransfer.getData(NOTE_SELECTION_DRAG_TYPE));
+
+    if (!selection) {
+      return;
+    }
+
+    event.preventDefault();
+    setDropTargetHeadingKey(null);
+    onMoveSelectionToSection(block.headingIndex, selection);
   }
 
   function startInlineEdit(block: MarkdownBlock, event?: MouseEvent<HTMLElement>) {
@@ -172,8 +224,18 @@ export function MarkdownContent({
       {renderMarkdownBlocks(blocks, {
         collapsedHeadingKeys,
         onToggleHeading: toggleHeading,
+        selectedHeadingIndex,
         onInsertSection,
         onDeleteSection,
+        onSelectHeadingSection,
+        dragDrop: onMoveSelectionToSection
+          ? {
+              dropTargetHeadingKey,
+              onDragOver: handleHeadingDragOver,
+              onDragLeave: handleHeadingDragLeave,
+              onDrop: handleHeadingDrop,
+            }
+          : null,
         inlineEdit: onMarkdownChange
           ? {
               editingBlockKey,
@@ -209,9 +271,19 @@ type InlineEditOptions = {
 type RenderMarkdownOptions = {
   collapsedHeadingKeys: Set<string>;
   onToggleHeading: (key: string) => void;
+  selectedHeadingIndex: number | null;
   onInsertSection?: (headingIndex: number) => void;
   onDeleteSection?: (headingIndex: number) => void;
+  onSelectHeadingSection?: (headingIndex: number) => void;
+  dragDrop: HeadingDragDropOptions | null;
   inlineEdit: InlineEditOptions | null;
+};
+
+type HeadingDragDropOptions = {
+  dropTargetHeadingKey: string | null;
+  onDragOver(block: Extract<MarkdownBlock, { type: "heading" }>, event: DragEvent<HTMLElement>): void;
+  onDragLeave(block: Extract<MarkdownBlock, { type: "heading" }>, event: DragEvent<HTMLElement>): void;
+  onDrop(block: Extract<MarkdownBlock, { type: "heading" }>, event: DragEvent<HTMLElement>): void;
 };
 
 function renderMarkdownBlocks(blocks: MarkdownBlock[], options: RenderMarkdownOptions) {
@@ -219,6 +291,11 @@ function renderMarkdownBlocks(blocks: MarkdownBlock[], options: RenderMarkdownOp
   const collapsedSectionLevels: number[] = [];
 
   blocks.forEach((block, index) => {
+    if (block.type === "boundary") {
+      trimCollapsedSectionLevelsAtBoundary(collapsedSectionLevels, block.level);
+      return;
+    }
+
     if (block.type === "heading") {
       for (let levelIndex = collapsedSectionLevels.length - 1; levelIndex >= 0; levelIndex -= 1) {
         if (collapsedSectionLevels[levelIndex] >= block.level) {
@@ -236,9 +313,13 @@ function renderMarkdownBlocks(blocks: MarkdownBlock[], options: RenderMarkdownOp
         renderMarkdownBlock(block, {
           canCollapse: hasCollapsibleSection(blocks, index),
           isCollapsed,
+          isSelected: options.selectedHeadingIndex === block.headingIndex,
           onToggleHeading: options.onToggleHeading,
           onInsertSection: options.onInsertSection,
           onDeleteSection: options.onDeleteSection,
+          onSelectHeadingSection: options.onSelectHeadingSection,
+          dragDrop: options.dragDrop,
+          isDropTarget: options.dragDrop?.dropTargetHeadingKey === block.key,
           inlineEdit: options.inlineEdit,
         }),
       );
@@ -263,14 +344,22 @@ function renderMarkdownBlock(
   headingOptions?: {
     canCollapse?: boolean;
     isCollapsed?: boolean;
+    isSelected?: boolean;
     onToggleHeading?: (key: string) => void;
     onInsertSection?: (headingIndex: number) => void;
     onDeleteSection?: (headingIndex: number) => void;
+    onSelectHeadingSection?: (headingIndex: number) => void;
+    dragDrop?: HeadingDragDropOptions | null;
+    isDropTarget?: boolean;
     inlineEdit?: InlineEditOptions | null;
   },
 ) {
   const inlineEdit = headingOptions?.inlineEdit ?? null;
   const isInlineEditing = inlineEdit?.editingBlockKey === block.key;
+
+  if (block.type === "boundary") {
+    return null;
+  }
 
   if (block.type === "code") {
     if (isInlineEditing) {
@@ -290,7 +379,7 @@ function renderMarkdownBlock(
   if (block.type === "heading") {
     const className = `markdown-heading markdown-heading-level-${block.styleLevel}${
       headingOptions?.isCollapsed ? " is-collapsed" : ""
-    }`;
+    }${headingOptions?.isSelected ? " is-selected" : ""}${headingOptions?.isDropTarget ? " is-drop-target" : ""}`;
 
     if (isInlineEditing) {
       return <InlineHeadingEditor block={block} className={className} inlineEdit={inlineEdit!} key={block.key} />;
@@ -301,6 +390,13 @@ function renderMarkdownBlock(
         <Fragment key={block.key}>
           <h3
             className={className}
+            onDragOver={
+              headingOptions?.dragDrop ? (event) => headingOptions.dragDrop?.onDragOver(block, event) : undefined
+            }
+            onDragLeave={
+              headingOptions?.dragDrop ? (event) => headingOptions.dragDrop?.onDragLeave(block, event) : undefined
+            }
+            onDrop={headingOptions?.dragDrop ? (event) => headingOptions.dragDrop?.onDrop(block, event) : undefined}
             onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
           >
             <span className="markdown-heading-row">
@@ -336,14 +432,26 @@ function renderMarkdownBlock(
 
     return (
       <Fragment key={block.key}>
-        <h3 className={className}>
+        <h3
+          className={className}
+          onDragOver={
+            headingOptions?.dragDrop ? (event) => headingOptions.dragDrop?.onDragOver(block, event) : undefined
+          }
+          onDragLeave={
+            headingOptions?.dragDrop ? (event) => headingOptions.dragDrop?.onDragLeave(block, event) : undefined
+          }
+          onDrop={headingOptions?.dragDrop ? (event) => headingOptions.dragDrop?.onDrop(block, event) : undefined}
+        >
           <span className="markdown-heading-row">
             <button
               className="markdown-heading-button"
               type="button"
               aria-expanded={!headingOptions.isCollapsed}
               title={headingOptions.isCollapsed ? "Expand section" : "Collapse section"}
-              onClick={() => headingOptions.onToggleHeading?.(block.key)}
+              onClick={() => {
+                headingOptions.onSelectHeadingSection?.(block.headingIndex);
+                headingOptions.onToggleHeading?.(block.key);
+              }}
               onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
             >
               <ChevronDown className="markdown-heading-icon" size={16} aria-hidden="true" />
@@ -758,6 +866,20 @@ function parseTextBlocks(content: string, keyPrefix: string, sourceStart: number
       return;
     }
 
+    const boundaryLevel = getSectionBoundaryLevel(line);
+
+    if (boundaryLevel !== undefined) {
+      flushParagraph();
+      flushList();
+      blocks.push({
+        type: "boundary",
+        key: nextKey("boundary"),
+        level: boundaryLevel,
+        range: { start: rawLine.start, end: rawLine.end },
+      });
+      return;
+    }
+
     const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*$/);
 
     if (heading) {
@@ -836,6 +958,10 @@ function getEditableBlockValue(block: MarkdownBlock): string {
     return block.items.join("\n");
   }
 
+  if (block.type === "boundary") {
+    return "";
+  }
+
   return block.content;
 }
 
@@ -867,6 +993,10 @@ function getMarkdownBlockReplacement(block: MarkdownBlock, nextValue: string): s
     return `${openingFence}\n${normalizedValue.replace(/\n$/, "")}\n\`\`\``;
   }
 
+  if (block.type === "boundary") {
+    return "";
+  }
+
   return normalizedValue.trim();
 }
 
@@ -884,10 +1014,43 @@ function hasCollapsibleSection(blocks: MarkdownBlock[], headingIndex: number): b
       return false;
     }
 
+    if (block.type === "boundary") {
+      if (block.level === null || block.level <= heading.level) {
+        return false;
+      }
+
+      continue;
+    }
+
     return true;
   }
 
   return false;
+}
+
+function trimCollapsedSectionLevelsAtBoundary(collapsedSectionLevels: number[], boundaryLevel: number | null): void {
+  if (boundaryLevel === null) {
+    collapsedSectionLevels.length = 0;
+    return;
+  }
+
+  for (let levelIndex = collapsedSectionLevels.length - 1; levelIndex >= 0; levelIndex -= 1) {
+    if (collapsedSectionLevels[levelIndex] >= boundaryLevel) {
+      collapsedSectionLevels.splice(levelIndex, 1);
+    }
+  }
+}
+
+function getSectionBoundaryLevel(line: string): number | null | undefined {
+  const match = line
+    .trim()
+    .match(new RegExp(`^<!--\\s*${escapeRegExp(SECTION_BOUNDARY_MARKER)}(?::([1-6]))?\\s*-->$`));
+
+  if (!match) {
+    return undefined;
+  }
+
+  return match[1] ? Number(match[1]) : null;
 }
 
 function renderInlineMarkdown(text: string) {
@@ -1107,4 +1270,8 @@ function isCodeKeyword(token: string): boolean {
   return /^(async|await|break|case|catch|class|const|continue|else|export|false|for|from|function|if|import|interface|let|new|null|return|switch|throw|true|try|type|undefined|var|while)$/.test(
     token,
   );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -1,10 +1,15 @@
 import { GripVertical, Undo2 } from "lucide-react";
 import type { DragEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { markdownToPlainText } from "../../core/markdown";
 import type { SavedMessage } from "../../core/models";
-import { selectionBelongsToElement } from "../insertSelection";
+import {
+  encodeNoteSelectionDragPayload,
+  NOTE_SELECTION_DRAG_TYPE,
+  selectionBelongsToElement,
+  type NoteSelectionDragPayload,
+} from "../insertSelection";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageActions } from "./MessageActions";
 
@@ -19,9 +24,16 @@ type MessageListProps = {
   onCollapsedMessageIdsChange(updater: (current: Set<string>) => Set<string>): void;
   onToggleMessageSelection(messageId: string): void;
   onMoveMessageAfter(message: SavedMessage, afterMessageId: string | null): void;
-  onCopyMessage(message: SavedMessage): void;
+  onMakeSelectionHeading(message: SavedMessage): void;
   onInsertMessage(message: SavedMessage): void;
   onInsertMessageSection(message: SavedMessage, headingIndex: number): void;
+  onUnmakeHeadingSection?(message: SavedMessage, headingIndex: number): void;
+  onMoveSelectedTextToSection(
+    message: SavedMessage,
+    headingIndex: number,
+    selection: NoteSelectionDragPayload,
+  ): void;
+  onSaveSelectedTextEdit(message: SavedMessage, selectedText: string, replacementText: string): Promise<void>;
   onSaveMessageEdit(message: SavedMessage, title: string, contentMarkdown: string): Promise<void>;
   onDeleteMessage(message: SavedMessage): void;
   onDeleteMessageSection(message: SavedMessage, headingIndex: number): void;
@@ -41,9 +53,12 @@ export function MessageList({
   onCollapsedMessageIdsChange,
   onToggleMessageSelection,
   onMoveMessageAfter,
-  onCopyMessage,
+  onMakeSelectionHeading,
   onInsertMessage,
   onInsertMessageSection,
+  onUnmakeHeadingSection,
+  onMoveSelectedTextToSection,
+  onSaveSelectedTextEdit,
   onSaveMessageEdit,
   onDeleteMessage,
   onDeleteMessageSection,
@@ -54,16 +69,33 @@ export function MessageList({
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftMarkdown, setDraftMarkdown] = useState("");
+  const [selectedTextEdit, setSelectedTextEdit] = useState<{
+    messageId: string;
+    selectedText: string;
+    draftText: string;
+  } | null>(null);
   const [headingCollapsedMessageIds, setHeadingCollapsedMessageIds] = useState<Set<string>>(() => new Set());
   const [draggingMessageId, setDraggingMessageId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ messageId: string; position: "before" | "after" } | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [activeHeadingSection, setActiveHeadingSection] = useState<{
+    messageId: string;
+    headingIndex: number;
+  } | null>(null);
 
   useEffect(() => {
     if (editingMessageId && collapsedMessageIds.has(editingMessageId)) {
       cancelEdit();
     }
-  }, [collapsedMessageIds, editingMessageId]);
+
+    if (selectedTextEdit && collapsedMessageIds.has(selectedTextEdit.messageId)) {
+      cancelSelectedTextEdit();
+    }
+
+    if (activeHeadingSection && collapsedMessageIds.has(activeHeadingSection.messageId)) {
+      setActiveHeadingSection(null);
+    }
+  }, [activeHeadingSection, collapsedMessageIds, editingMessageId, selectedTextEdit]);
 
   useEffect(() => {
     function deleteSelectedTextOnBackspace(event: globalThis.KeyboardEvent) {
@@ -89,11 +121,25 @@ export function MessageList({
     function updateHighlightedMessage() {
       const messageId = getMessageForKeyboardSelection(window.getSelection(), messages)?.id ?? null;
       setHighlightedMessageId((currentMessageId) => (currentMessageId === messageId ? currentMessageId : messageId));
+
+      if (messageId) {
+        setActiveHeadingSection(null);
+      }
     }
 
     updateHighlightedMessage();
     document.addEventListener("selectionchange", updateHighlightedMessage);
     return () => document.removeEventListener("selectionchange", updateHighlightedMessage);
+  }, [messages]);
+
+  useEffect(() => {
+    setActiveHeadingSection((current) => {
+      if (!current || messages.some((message) => message.id === current.messageId)) {
+        return current;
+      }
+
+      return null;
+    });
   }, [messages]);
 
   if (messages.length === 0) {
@@ -121,6 +167,7 @@ export function MessageList({
       return;
     }
 
+    clearActiveHeadingSection(message.id);
     setEditingMessageId(message.id);
     setDraftTitle(getNoteHeaderParts(message.contentMarkdown || message.contentText, message.title).header);
     setDraftMarkdown(message.contentMarkdown || message.contentText);
@@ -135,11 +182,49 @@ export function MessageList({
     });
   }
 
+  function handleEditMessage(message: SavedMessage) {
+    if (highlightedMessageId === message.id && startSelectedTextEdit(message)) {
+      return;
+    }
+
+    toggleEditing(message);
+  }
+
+  function startSelectedTextEdit(message: SavedMessage): boolean {
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim() ?? "";
+    const messageElement = getMessageElement(message.id);
+
+    if (!selection || selection.isCollapsed || !selectedText || !messageElement) {
+      return false;
+    }
+
+    if (!selectionBelongsToElement(selection, messageElement)) {
+      return false;
+    }
+
+    setEditingMessageId(null);
+    setDraftTitle("");
+    setDraftMarkdown("");
+    clearActiveHeadingSection(message.id);
+    setSelectedTextEdit({ messageId: message.id, selectedText, draftText: selectedText });
+    return true;
+  }
+
   async function saveEdit(message: SavedMessage) {
     await onSaveMessageEdit(message, draftTitle, draftMarkdown);
     setEditingMessageId(null);
     setDraftTitle("");
     setDraftMarkdown("");
+  }
+
+  async function saveSelectedTextEdit(message: SavedMessage) {
+    if (!selectedTextEdit || selectedTextEdit.messageId !== message.id) {
+      return;
+    }
+
+    await onSaveSelectedTextEdit(message, selectedTextEdit.selectedText, selectedTextEdit.draftText);
+    setSelectedTextEdit(null);
   }
 
   async function saveInlineMarkdownEdit(message: SavedMessage, contentMarkdown: string) {
@@ -158,9 +243,36 @@ export function MessageList({
     setDraftMarkdown("");
   }
 
+  function cancelSelectedTextEdit() {
+    setSelectedTextEdit(null);
+  }
+
+  function selectHeadingSection(message: SavedMessage, headingIndex: number) {
+    setSelectedTextEdit(null);
+    setActiveHeadingSection({ messageId: message.id, headingIndex });
+  }
+
+  function clearActiveHeadingSection(messageId: string) {
+    setActiveHeadingSection((current) => (current?.messageId === messageId ? null : current));
+  }
+
+  function unmakeActiveHeadingSection(message: SavedMessage) {
+    if (!activeHeadingSection || activeHeadingSection.messageId !== message.id) {
+      return;
+    }
+
+    const headingIndex = activeHeadingSection.headingIndex;
+    setActiveHeadingSection(null);
+    onUnmakeHeadingSection?.(message, headingIndex);
+  }
+
   function toggleCollapse(message: SavedMessage) {
     if (editingMessageId === message.id && !collapsedMessageIds.has(message.id)) {
       cancelEdit();
+    }
+
+    if (!collapsedMessageIds.has(message.id)) {
+      clearActiveHeadingSection(message.id);
     }
 
     onCollapsedMessageIdsChange((current) => {
@@ -225,6 +337,27 @@ export function MessageList({
     setDraggingMessageId(message.id);
   }
 
+  function handleSelectedTextDragStart(message: SavedMessage, event: DragEvent<HTMLElement>) {
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim() ?? "";
+
+    if (
+      !selection ||
+      selection.isCollapsed ||
+      !selectedText ||
+      !selectionBelongsToElement(selection, event.currentTarget)
+    ) {
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", selectedText);
+    event.dataTransfer.setData(
+      NOTE_SELECTION_DRAG_TYPE,
+      encodeNoteSelectionDragPayload({ messageId: message.id, text: selectedText }),
+    );
+  }
+
   function handleMessageDragOver(message: SavedMessage, event: DragEvent<HTMLElement>) {
     if (!getDraggedMessage(event)) {
       return;
@@ -278,6 +411,9 @@ export function MessageList({
         const isDropBefore = dropTarget?.messageId === message.id && dropTarget.position === "before";
         const isDropAfter = dropTarget?.messageId === message.id && dropTarget.position === "after";
         const areHeadingsCollapsed = headingCollapsedMessageIds.has(message.id);
+        const selectedTextEditor = selectedTextEdit?.messageId === message.id ? selectedTextEdit : null;
+        const activeHeadingIndex =
+          activeHeadingSection?.messageId === message.id ? activeHeadingSection.headingIndex : null;
         const noteMarkdown = isEditing ? draftMarkdown : message.contentMarkdown || message.contentText;
         const noteHeader = getNoteHeaderParts(noteMarkdown, isEditing ? draftTitle : message.title);
 
@@ -326,7 +462,11 @@ export function MessageList({
               <span className="message-header-text">{noteHeader.header}</span>
             </button>
             {!isCollapsed ? (
-              <article className="message-content" data-note-message-id={message.id}>
+              <article
+                className="message-content"
+                data-note-message-id={message.id}
+                onDragStart={(event) => handleSelectedTextDragStart(message, event)}
+              >
                 {isEditing ? (
                   <div className="message-editor">
                     <label className="message-editor-title-field">
@@ -355,13 +495,32 @@ export function MessageList({
                     </div>
                   </div>
                 ) : noteHeader.bodyMarkdown.trim() ? (
-                  <MarkdownContent
-                    markdown={noteHeader.bodyMarkdown}
-                    collapseAllHeadings={areHeadingsCollapsed}
-                    onInsertSection={(headingIndex) => onInsertMessageSection(message, headingIndex)}
-                    onDeleteSection={(headingIndex) => onDeleteMessageSection(message, headingIndex)}
-                    onMarkdownChange={(nextMarkdown) => saveInlineMarkdownEdit(message, nextMarkdown)}
-                  />
+                  <>
+                    {selectedTextEditor ? (
+                      <SelectedTextEditor
+                        value={selectedTextEditor.draftText}
+                        onChange={(draftText) =>
+                          setSelectedTextEdit((current) =>
+                            current?.messageId === message.id ? { ...current, draftText } : current,
+                          )
+                        }
+                        onSave={() => void saveSelectedTextEdit(message)}
+                        onCancel={cancelSelectedTextEdit}
+                      />
+                    ) : null}
+                    <MarkdownContent
+                      markdown={noteHeader.bodyMarkdown}
+                      collapseAllHeadings={areHeadingsCollapsed}
+                      selectedHeadingIndex={activeHeadingIndex}
+                      onInsertSection={(headingIndex) => onInsertMessageSection(message, headingIndex)}
+                      onDeleteSection={(headingIndex) => onDeleteMessageSection(message, headingIndex)}
+                      onSelectHeadingSection={(headingIndex) => selectHeadingSection(message, headingIndex)}
+                      onMoveSelectionToSection={(headingIndex, selection) =>
+                        onMoveSelectedTextToSection(message, headingIndex, selection)
+                      }
+                      onMarkdownChange={(nextMarkdown) => saveInlineMarkdownEdit(message, nextMarkdown)}
+                    />
+                  </>
                 ) : null}
               </article>
             ) : null}
@@ -369,13 +528,15 @@ export function MessageList({
               message={message}
               isEditing={isEditing}
               areHeadingsCollapsed={areHeadingsCollapsed}
+              hasActiveHeadingSection={activeHeadingIndex !== null}
               hasHighlightedSelection={highlightedMessageId === message.id}
               canUndoMessageEdit={undoableMessageIds.has(message.id)}
               canUndoDeletedMessage={canUndoDeletedMessage}
               onToggleHeadings={toggleHeadingCollapse}
               onInsertMessage={onInsertMessage}
-              onCopyMessage={onCopyMessage}
-              onEditMessage={toggleEditing}
+              onMakeSelectionHeading={onMakeSelectionHeading}
+              onUnmakeHeadingSection={unmakeActiveHeadingSection}
+              onEditMessage={handleEditMessage}
               onDeleteMessage={onDeleteMessage}
               onUndoMessageEdit={onUndoMessageEdit}
               onUndoDeletedMessage={onUndoDeletedMessage}
@@ -384,6 +545,52 @@ export function MessageList({
         );
       })}
     </ul>
+  );
+}
+
+function SelectedTextEditor({
+  value,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  value: string;
+  onChange(value: string): void;
+  onSave(): void;
+  onCancel(): void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    textarea.focus();
+    textarea.setSelectionRange(0, textarea.value.length);
+  }, []);
+
+  return (
+    <div className="message-selection-editor">
+      <textarea
+        ref={textareaRef}
+        className="message-selection-editor-textarea"
+        aria-label="Edit highlighted text"
+        value={value}
+        rows={Math.max(3, Math.min(12, value.split("\n").length + 1))}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <div className="message-selection-editor-actions">
+        <button className="tool-button" type="button" onClick={onSave}>
+          Save
+        </button>
+        <button className="tool-button secondary" type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -418,6 +625,14 @@ export function getDefaultNoteHeader(markdown: string): string {
 
 function normalizeNoteHeader(title: string | null | undefined): string {
   return (title ?? "").replace(/\s+/g, " ").trim();
+}
+
+function getMessageElement(messageId: string): HTMLElement | null {
+  return (
+    Array.from(document.querySelectorAll<HTMLElement>("[data-note-message-id]")).find(
+      (element) => element.dataset.noteMessageId === messageId,
+    ) ?? null
+  );
 }
 
 export function getMessageForKeyboardSelection(

@@ -8,6 +8,7 @@ import {
   isEditableKeyboardTarget,
   MessageList,
 } from "../src/sidebar/components/MessageList";
+import { NOTE_SELECTION_DRAG_TYPE, parseNoteSelectionDragPayload } from "../src/sidebar/insertSelection";
 import type { SavedMessage } from "../src/core/models";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -92,9 +93,11 @@ describe("MessageList note headers", () => {
           onCollapsedMessageIdsChange: vi.fn(),
           onToggleMessageSelection: vi.fn(),
           onMoveMessageAfter: vi.fn(),
-          onCopyMessage: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
           onInsertMessage: vi.fn(),
           onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
           onSaveMessageEdit: vi.fn(async () => undefined),
           onDeleteMessage: vi.fn(),
           onDeleteMessageSection: vi.fn(),
@@ -130,6 +133,7 @@ describe("MessageList note headers", () => {
     document.body.append(host);
     const root = createRoot(host);
     const note = message("a", "Alpha beta");
+    const onMakeSelectionHeading = vi.fn();
 
     await act(() => {
       root.render(
@@ -144,9 +148,11 @@ describe("MessageList note headers", () => {
           onCollapsedMessageIdsChange: vi.fn(),
           onToggleMessageSelection: vi.fn(),
           onMoveMessageAfter: vi.fn(),
-          onCopyMessage: vi.fn(),
+          onMakeSelectionHeading,
           onInsertMessage: vi.fn(),
           onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
           onSaveMessageEdit: vi.fn(async () => undefined),
           onDeleteMessage: vi.fn(),
           onDeleteMessageSection: vi.fn(),
@@ -158,11 +164,14 @@ describe("MessageList note headers", () => {
     });
 
     const paragraphText = getFirstTextNode(host.querySelector(".markdown-paragraph"));
+    const headingButton = host.querySelector<HTMLButtonElement>(".message-heading-button");
     const sendButton = host.querySelector<HTMLButtonElement>(".message-insert-button");
     const range = document.createRange();
 
     expect(paragraphText).not.toBeNull();
+    expect(headingButton).not.toBeNull();
     expect(sendButton).not.toBeNull();
+    expect(headingButton?.classList.contains("has-highlighted-selection")).toBe(false);
     expect(sendButton?.classList.contains("has-highlighted-selection")).toBe(false);
 
     range.setStart(paragraphText!, 0);
@@ -174,8 +183,16 @@ describe("MessageList note headers", () => {
       document.dispatchEvent(new Event("selectionchange"));
     });
 
+    expect(headingButton?.classList.contains("has-highlighted-selection")).toBe(true);
+    expect(headingButton?.getAttribute("aria-label")).toBe("Make highlighted text a collapsible header");
     expect(sendButton?.classList.contains("has-highlighted-selection")).toBe(true);
     expect(sendButton?.getAttribute("aria-label")).toBe("Insert highlighted text into ChatGPT");
+
+    await act(() => {
+      headingButton?.click();
+    });
+
+    expect(onMakeSelectionHeading).toHaveBeenCalledWith(note);
 
     window.getSelection()?.removeAllRanges();
 
@@ -183,7 +200,230 @@ describe("MessageList note headers", () => {
       document.dispatchEvent(new Event("selectionchange"));
     });
 
+    expect(headingButton?.classList.contains("has-highlighted-selection")).toBe(false);
     expect(sendButton?.classList.contains("has-highlighted-selection")).toBe(false);
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("makes the edit button edit only highlighted note text", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = message("a", "Alpha beta");
+    const onSaveSelectedTextEdit = vi.fn(async () => undefined);
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit,
+          onSaveMessageEdit: vi.fn(async () => undefined),
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText: vi.fn(),
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    const paragraphText = getFirstTextNode(host.querySelector(".markdown-paragraph"));
+    const editButton = host.querySelector<HTMLButtonElement>(".message-edit-button");
+    const range = document.createRange();
+
+    expect(paragraphText).not.toBeNull();
+    expect(editButton).not.toBeNull();
+    expect(editButton?.classList.contains("has-highlighted-selection")).toBe(false);
+
+    range.setStart(paragraphText!, 0);
+    range.setEnd(paragraphText!, 5);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    await act(() => {
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    expect(editButton?.classList.contains("has-highlighted-selection")).toBe(true);
+    expect(editButton?.getAttribute("aria-label")).toBe("Edit highlighted text");
+
+    await act(() => {
+      editButton?.click();
+    });
+
+    const editor = host.querySelector<HTMLTextAreaElement>("textarea[aria-label='Edit highlighted text']");
+
+    expect(editor).not.toBeNull();
+    expect(editor?.value).toBe("Alpha");
+
+    await act(() => {
+      setControlValue(editor!, "Edited alpha");
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(".message-selection-editor .tool-button")?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSaveSelectedTextEdit).toHaveBeenCalledWith(note, "Alpha", "Edited alpha");
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("activates the H2 button for a clicked heading and routes it to unmake that section", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = message("a", ["## Alpha", "", "Alpha body"].join("\n"));
+    const onMakeSelectionHeading = vi.fn();
+    const onUnmakeHeadingSection = vi.fn();
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading,
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onUnmakeHeadingSection,
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
+          onSaveMessageEdit: vi.fn(async () => undefined),
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText: vi.fn(),
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    const sectionButton = host.querySelector<HTMLButtonElement>(".markdown-heading-button");
+    const headingAction = host.querySelector<HTMLButtonElement>(".message-heading-button");
+
+    expect(sectionButton).not.toBeNull();
+    expect(headingAction).not.toBeNull();
+    expect(headingAction?.classList.contains("is-active")).toBe(false);
+
+    await act(() => {
+      sectionButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(headingAction?.classList.contains("is-active")).toBe(true);
+    expect(headingAction?.getAttribute("aria-label")).toBe("Unmake selected collapsible header");
+
+    await act(() => {
+      headingAction?.click();
+    });
+
+    expect(onUnmakeHeadingSection).toHaveBeenCalledWith(note, 0);
+    expect(onMakeSelectionHeading).not.toHaveBeenCalled();
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("drags highlighted note text onto a heading section", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = message("a", ["## Target", "", "Existing body.", "", "Move me"].join("\n"));
+    const onMoveSelectedTextToSection = vi.fn();
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection,
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
+          onSaveMessageEdit: vi.fn(async () => undefined),
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText: vi.fn(),
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    const article = host.querySelector<HTMLElement>("[data-note-message-id='a']");
+    const heading = host.querySelector<HTMLElement>(".markdown-heading");
+    const paragraphs = host.querySelectorAll<HTMLElement>(".markdown-paragraph");
+    const selectedText = getFirstTextNode(paragraphs[1]);
+    const range = document.createRange();
+    const dataTransfer = fakeDataTransfer();
+
+    expect(article).not.toBeNull();
+    expect(heading).not.toBeNull();
+    expect(selectedText).not.toBeNull();
+    range.setStart(selectedText!, 0);
+    range.setEnd(selectedText!, "Move me".length);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    await act(() => {
+      article?.dispatchEvent(dragEvent("dragstart", dataTransfer));
+    });
+
+    expect(parseNoteSelectionDragPayload(dataTransfer.getData(NOTE_SELECTION_DRAG_TYPE))).toEqual({
+      messageId: note.id,
+      text: "Move me",
+    });
+
+    await act(() => {
+      heading?.dispatchEvent(dragEvent("dragover", dataTransfer));
+    });
+
+    expect(heading?.classList.contains("is-drop-target")).toBe(true);
+
+    await act(() => {
+      heading?.dispatchEvent(dragEvent("drop", dataTransfer));
+    });
+
+    expect(onMoveSelectedTextToSection).toHaveBeenCalledWith(note, 0, {
+      messageId: note.id,
+      text: "Move me",
+    });
 
     await act(() => {
       root.unmount();
@@ -211,9 +451,11 @@ describe("MessageList note headers", () => {
           onCollapsedMessageIdsChange: vi.fn(),
           onToggleMessageSelection: vi.fn(),
           onMoveMessageAfter,
-          onCopyMessage: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
           onInsertMessage: vi.fn(),
           onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
           onSaveMessageEdit: vi.fn(async () => undefined),
           onDeleteMessage: vi.fn(),
           onDeleteMessageSection: vi.fn(),
@@ -268,9 +510,11 @@ describe("MessageList note headers", () => {
           onCollapsedMessageIdsChange: vi.fn(),
           onToggleMessageSelection,
           onMoveMessageAfter: vi.fn(),
-          onCopyMessage: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
           onInsertMessage: vi.fn(),
           onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
           onSaveMessageEdit: vi.fn(async () => undefined),
           onDeleteMessage: vi.fn(),
           onDeleteMessageSection: vi.fn(),
@@ -319,9 +563,11 @@ describe("MessageList note headers", () => {
           onCollapsedMessageIdsChange: vi.fn(),
           onToggleMessageSelection: vi.fn(),
           onMoveMessageAfter: vi.fn(),
-          onCopyMessage: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
           onInsertMessage: vi.fn(),
           onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
           onSaveMessageEdit: vi.fn(async () => undefined),
           onDeleteMessage: vi.fn(),
           onDeleteMessageSection: vi.fn(),
@@ -370,9 +616,11 @@ describe("MessageList note headers", () => {
           onCollapsedMessageIdsChange: vi.fn(),
           onToggleMessageSelection: vi.fn(),
           onMoveMessageAfter: vi.fn(),
-          onCopyMessage: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
           onInsertMessage: vi.fn(),
           onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
           onSaveMessageEdit: vi.fn(async () => undefined),
           onDeleteMessage: vi.fn(),
           onDeleteMessageSection: vi.fn(),
@@ -422,25 +670,42 @@ function getFirstTextNode(element: Element | null): Text | null {
   return node instanceof Text ? node : null;
 }
 
+function setControlValue(control: HTMLTextAreaElement, value: string) {
+  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(control), "value");
+  descriptor?.set?.call(control, value);
+  control.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function fakeDataTransfer(): DataTransfer {
   const values = new Map<string, string>();
+  const types: string[] = [];
 
   return {
     dropEffect: "none",
     effectAllowed: "uninitialized",
     files: [] as unknown as FileList,
     items: [] as unknown as DataTransferItemList,
-    types: [],
+    types,
     clearData: vi.fn((type?: string) => {
       if (type) {
         values.delete(type);
+        const typeIndex = types.indexOf(type);
+
+        if (typeIndex >= 0) {
+          types.splice(typeIndex, 1);
+        }
       } else {
         values.clear();
+        types.length = 0;
       }
     }),
     getData: vi.fn((type: string) => values.get(type) ?? ""),
     setData: vi.fn((type: string, value: string) => {
       values.set(type, value);
+
+      if (!types.includes(type)) {
+        types.push(type);
+      }
     }),
     setDragImage: vi.fn(),
   };

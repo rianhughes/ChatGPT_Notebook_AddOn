@@ -7,6 +7,9 @@ import { MarkdownContent } from "../src/sidebar/components/MarkdownContent";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+const HEADING_BOUNDARY = "<!-- cgpt-notes-section-boundary:2 -->";
+const CHILD_HEADING_BOUNDARY = "<!-- cgpt-notes-section-boundary:3 -->";
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -200,6 +203,129 @@ describe("MarkdownContent", () => {
     expect(host.textContent).not.toContain("Nested body");
     expect(host.textContent).toContain("Beta");
     expect(host.textContent).toContain("Beta body");
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("renders hidden heading boundaries without making following text collapsible", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(() => {
+      root.render(<MarkdownContent markdown={["## Empty", "", HEADING_BOUNDARY, "", "Outside body"].join("\n")} />);
+    });
+
+    expect(host.textContent).toContain("Empty");
+    expect(host.textContent).toContain("Outside body");
+    expect(host.textContent).not.toContain("cgpt-notes-section-boundary");
+    expect(host.querySelector(".markdown-heading-button")).toBeNull();
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("collapses only moved content before a hidden heading boundary", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(() => {
+      root.render(
+        <MarkdownContent
+          markdown={["## Target", "", "Moved body", "", HEADING_BOUNDARY, "", "Outside body"].join("\n")}
+        />,
+      );
+    });
+
+    const targetButton = host.querySelector<HTMLButtonElement>(".markdown-heading-button");
+
+    expect(targetButton).not.toBeNull();
+    expect(host.textContent).toContain("Moved body");
+    expect(host.textContent).toContain("Outside body");
+
+    await act(() => {
+      targetButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(targetButton?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.textContent).not.toContain("Moved body");
+    expect(host.textContent).toContain("Outside body");
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("keeps parent collapse active across a child heading boundary", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+
+    await act(() => {
+      root.render(
+        <MarkdownContent
+          markdown={[
+            "## Parent",
+            "",
+            "Parent intro",
+            "",
+            "### Child",
+            "",
+            "Child body",
+            "",
+            CHILD_HEADING_BOUNDARY,
+            "",
+            "Parent outro",
+          ].join("\n")}
+        />,
+      );
+    });
+
+    const parentButton = host.querySelector<HTMLButtonElement>(".markdown-heading-button");
+
+    expect(parentButton).not.toBeNull();
+    expect(host.textContent).toContain("Parent outro");
+
+    await act(() => {
+      parentButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(parentButton?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.textContent).not.toContain("Parent intro");
+    expect(host.textContent).not.toContain("Child body");
+    expect(host.textContent).not.toContain("Parent outro");
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("marks a selected collapsible heading and reports its source index", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const onSelectHeadingSection = vi.fn();
+    const markdown = ["## Alpha", "", "Alpha body", "", "## Beta", "", "Beta body"].join("\n");
+
+    await act(() => {
+      root.render(<MarkdownContent markdown={markdown} onSelectHeadingSection={onSelectHeadingSection} />);
+    });
+
+    const headingButtons = host.querySelectorAll<HTMLButtonElement>(".markdown-heading-button");
+
+    await act(() => {
+      headingButtons[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onSelectHeadingSection).toHaveBeenCalledWith(1);
+
+    await act(() => {
+      root.render(<MarkdownContent markdown={markdown} selectedHeadingIndex={1} />);
+    });
+
+    const headings = host.querySelectorAll<HTMLElement>(".markdown-heading");
+    expect(headings[0]?.classList.contains("is-selected")).toBe(false);
+    expect(headings[1]?.classList.contains("is-selected")).toBe(true);
 
     await act(() => {
       root.unmount();
