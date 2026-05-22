@@ -1,23 +1,46 @@
 import { ChevronDown, Copy, SendHorizontal, Trash2 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import { copyText } from "../../core/clipboard";
 
+type SourceRange = {
+  start: number;
+  end: number;
+};
+
 type MarkdownPart =
-  | { type: "code"; language: string | null; content: string }
-  | { type: "text"; content: string };
+  | { type: "code"; language: string | null; content: string; range: SourceRange }
+  | { type: "text"; content: string; range: SourceRange };
 
 type MarkdownBlock =
-  | { type: "code"; key: string; language: string | null; content: string }
-  | { type: "heading"; key: string; level: number; styleLevel: number; headingIndex: number; content: string }
-  | { type: "list"; key: string; items: string[] }
-  | { type: "paragraph"; key: string; content: string };
+  | { type: "code"; key: string; language: string | null; content: string; range: SourceRange }
+  | {
+      type: "heading";
+      key: string;
+      level: number;
+      styleLevel: number;
+      headingIndex: number;
+      content: string;
+      range: SourceRange;
+    }
+  | { type: "list"; key: string; items: string[]; range: SourceRange }
+  | { type: "paragraph"; key: string; content: string; range: SourceRange };
 
 type MarkdownContentProps = {
   markdown: string;
   collapseAllHeadings?: boolean;
   onInsertSection?(headingIndex: number): void;
   onDeleteSection?(headingIndex: number): void;
+  onMarkdownChange?(markdown: string): void | Promise<void>;
 };
 
 export function MarkdownContent({
@@ -25,10 +48,17 @@ export function MarkdownContent({
   collapseAllHeadings = false,
   onInsertSection,
   onDeleteSection,
+  onMarkdownChange,
 }: MarkdownContentProps) {
-  const blocks = useMemo(() => parseMarkdownBlocks(markdown), [markdown]);
+  const normalizedMarkdown = useMemo(() => markdown.replace(/\r\n/g, "\n"), [markdown]);
+  const blocks = useMemo(() => parseMarkdownBlocks(normalizedMarkdown), [normalizedMarkdown]);
   const [collapsedHeadingKeys, setCollapsedHeadingKeys] = useState<Set<string>>(() => new Set());
+  const [editingBlockKey, setEditingBlockKey] = useState<string | null>(null);
+  const [inlineDraftValue, setInlineDraftValue] = useState("");
+  const [isSavingInlineEdit, setIsSavingInlineEdit] = useState(false);
   const collapseAllHeadingsAppliedRef = useRef(false);
+  const cancelNextInlineBlurRef = useRef(false);
+  const isCommittingInlineEditRef = useRef(false);
 
   useEffect(() => {
     if (!collapseAllHeadings) {
@@ -62,6 +92,13 @@ export function MarkdownContent({
     });
   }, [blocks, collapseAllHeadings]);
 
+  useEffect(() => {
+    if (editingBlockKey && !blocks.some((block) => block.key === editingBlockKey)) {
+      setEditingBlockKey(null);
+      setInlineDraftValue("");
+    }
+  }, [blocks, editingBlockKey]);
+
   function toggleHeading(key: string) {
     setCollapsedHeadingKeys((current) => {
       const next = new Set(current);
@@ -76,9 +113,79 @@ export function MarkdownContent({
     });
   }
 
+  function startInlineEdit(block: MarkdownBlock, event?: MouseEvent<HTMLElement>) {
+    if (!onMarkdownChange || isSavingInlineEdit) {
+      return;
+    }
+
+    const target = event?.target;
+
+    if (target instanceof Element && target.closest(".markdown-heading-action-button, .markdown-code-copy-button")) {
+      return;
+    }
+
+    event?.preventDefault();
+    event?.stopPropagation();
+    cancelNextInlineBlurRef.current = false;
+    setEditingBlockKey(block.key);
+    setInlineDraftValue(getEditableBlockValue(block));
+  }
+
+  function cancelInlineEdit() {
+    cancelNextInlineBlurRef.current = true;
+    setEditingBlockKey(null);
+    setInlineDraftValue("");
+  }
+
+  async function commitInlineEdit(block: MarkdownBlock, nextValue = inlineDraftValue) {
+    if (!onMarkdownChange || editingBlockKey !== block.key || isCommittingInlineEditRef.current) {
+      return;
+    }
+
+    if (cancelNextInlineBlurRef.current) {
+      cancelNextInlineBlurRef.current = false;
+      return;
+    }
+
+    const nextMarkdown = replaceMarkdownBlock(normalizedMarkdown, block, nextValue);
+
+    setEditingBlockKey(null);
+    setInlineDraftValue("");
+
+    if (nextMarkdown === normalizedMarkdown) {
+      return;
+    }
+
+    isCommittingInlineEditRef.current = true;
+    setIsSavingInlineEdit(true);
+
+    try {
+      await onMarkdownChange(nextMarkdown);
+    } finally {
+      isCommittingInlineEditRef.current = false;
+      setIsSavingInlineEdit(false);
+    }
+  }
+
   return (
     <div className="rendered-message">
-      {renderMarkdownBlocks(blocks, collapsedHeadingKeys, toggleHeading, onInsertSection, onDeleteSection)}
+      {renderMarkdownBlocks(blocks, {
+        collapsedHeadingKeys,
+        onToggleHeading: toggleHeading,
+        onInsertSection,
+        onDeleteSection,
+        inlineEdit: onMarkdownChange
+          ? {
+              editingBlockKey,
+              draftValue: inlineDraftValue,
+              isSaving: isSavingInlineEdit,
+              onStart: startInlineEdit,
+              onChange: setInlineDraftValue,
+              onCommit: (block, value) => void commitInlineEdit(block, value),
+              onCancel: cancelInlineEdit,
+            }
+          : null,
+      })}
     </div>
   );
 }
@@ -89,13 +196,25 @@ function getCollapsibleHeadingKeys(blocks: MarkdownBlock[]): string[] {
     .filter((key): key is string => Boolean(key));
 }
 
-function renderMarkdownBlocks(
-  blocks: MarkdownBlock[],
-  collapsedHeadingKeys: Set<string>,
-  onToggleHeading: (key: string) => void,
-  onInsertSection?: (headingIndex: number) => void,
-  onDeleteSection?: (headingIndex: number) => void,
-) {
+type InlineEditOptions = {
+  editingBlockKey: string | null;
+  draftValue: string;
+  isSaving: boolean;
+  onStart(block: MarkdownBlock, event: MouseEvent<HTMLElement>): void;
+  onChange(value: string): void;
+  onCommit(block: MarkdownBlock, value?: string): void;
+  onCancel(): void;
+};
+
+type RenderMarkdownOptions = {
+  collapsedHeadingKeys: Set<string>;
+  onToggleHeading: (key: string) => void;
+  onInsertSection?: (headingIndex: number) => void;
+  onDeleteSection?: (headingIndex: number) => void;
+  inlineEdit: InlineEditOptions | null;
+};
+
+function renderMarkdownBlocks(blocks: MarkdownBlock[], options: RenderMarkdownOptions) {
   const renderedBlocks: ReactNode[] = [];
   const collapsedSectionLevels: number[] = [];
 
@@ -111,15 +230,16 @@ function renderMarkdownBlocks(
         return;
       }
 
-      const isCollapsed = collapsedHeadingKeys.has(block.key);
+      const isCollapsed = options.collapsedHeadingKeys.has(block.key);
 
       renderedBlocks.push(
         renderMarkdownBlock(block, {
           canCollapse: hasCollapsibleSection(blocks, index),
           isCollapsed,
-          onToggleHeading,
-          onInsertSection,
-          onDeleteSection,
+          onToggleHeading: options.onToggleHeading,
+          onInsertSection: options.onInsertSection,
+          onDeleteSection: options.onDeleteSection,
+          inlineEdit: options.inlineEdit,
         }),
       );
 
@@ -131,7 +251,7 @@ function renderMarkdownBlocks(
     }
 
     if (collapsedSectionLevels.length === 0) {
-      renderedBlocks.push(renderMarkdownBlock(block));
+      renderedBlocks.push(renderMarkdownBlock(block, { inlineEdit: options.inlineEdit }));
     }
   });
 
@@ -141,15 +261,30 @@ function renderMarkdownBlocks(
 function renderMarkdownBlock(
   block: MarkdownBlock,
   headingOptions?: {
-    canCollapse: boolean;
-    isCollapsed: boolean;
-    onToggleHeading: (key: string) => void;
+    canCollapse?: boolean;
+    isCollapsed?: boolean;
+    onToggleHeading?: (key: string) => void;
     onInsertSection?: (headingIndex: number) => void;
     onDeleteSection?: (headingIndex: number) => void;
+    inlineEdit?: InlineEditOptions | null;
   },
 ) {
+  const inlineEdit = headingOptions?.inlineEdit ?? null;
+  const isInlineEditing = inlineEdit?.editingBlockKey === block.key;
+
   if (block.type === "code") {
-    return <CodeBlock language={block.language} content={block.content} key={block.key} />;
+    if (isInlineEditing) {
+      return <InlineCodeEditor block={block} inlineEdit={inlineEdit!} key={block.key} />;
+    }
+
+    return (
+      <CodeBlock
+        language={block.language}
+        content={block.content}
+        key={block.key}
+        onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
+      />
+    );
   }
 
   if (block.type === "heading") {
@@ -157,11 +292,17 @@ function renderMarkdownBlock(
       headingOptions?.isCollapsed ? " is-collapsed" : ""
     }`;
 
+    if (isInlineEditing) {
+      return <InlineHeadingEditor block={block} className={className} inlineEdit={inlineEdit!} key={block.key} />;
+    }
+
     if (!headingOptions?.canCollapse) {
       return (
         <Fragment key={block.key}>
-          <span className="markdown-heading-anchor" aria-hidden="true" />
-          <h3 className={className} onClick={handleFloatingHeadingClick}>
+          <h3
+            className={className}
+            onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
+          >
             <span className="markdown-heading-row">
               <span className="markdown-heading-text">{renderInlineMarkdown(block.content)}</span>
               {headingOptions?.onDeleteSection ? (
@@ -195,15 +336,15 @@ function renderMarkdownBlock(
 
     return (
       <Fragment key={block.key}>
-        <span className="markdown-heading-anchor" aria-hidden="true" />
-        <h3 className={className} onClickCapture={handleFloatingHeadingClick}>
+        <h3 className={className}>
           <span className="markdown-heading-row">
             <button
               className="markdown-heading-button"
               type="button"
               aria-expanded={!headingOptions.isCollapsed}
               title={headingOptions.isCollapsed ? "Expand section" : "Collapse section"}
-              onClick={() => headingOptions.onToggleHeading(block.key)}
+              onClick={() => headingOptions.onToggleHeading?.(block.key)}
+              onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
             >
               <ChevronDown className="markdown-heading-icon" size={16} aria-hidden="true" />
               <span className="markdown-heading-text">{renderInlineMarkdown(block.content)}</span>
@@ -238,8 +379,16 @@ function renderMarkdownBlock(
   }
 
   if (block.type === "list") {
+    if (isInlineEditing) {
+      return <InlineTextBlockEditor block={block} className="markdown-list" inlineEdit={inlineEdit!} key={block.key} />;
+    }
+
     return (
-      <ul className="markdown-list" key={block.key}>
+      <ul
+        className="markdown-list"
+        key={block.key}
+        onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
+      >
         {block.items.map((item, itemIndex) => (
           <li key={itemIndex}>{renderInlineMarkdown(item)}</li>
         ))}
@@ -247,19 +396,37 @@ function renderMarkdownBlock(
     );
   }
 
+  if (isInlineEditing) {
+    return (
+      <InlineTextBlockEditor block={block} className="markdown-paragraph" inlineEdit={inlineEdit!} key={block.key} />
+    );
+  }
+
   return (
-    <p className="markdown-paragraph" key={block.key}>
+    <p
+      className="markdown-paragraph"
+      key={block.key}
+      onDoubleClick={inlineEdit ? (event) => inlineEdit.onStart(block, event) : undefined}
+    >
       {renderInlineMarkdown(block.content)}
     </p>
   );
 }
 
-function CodeBlock({ language, content }: { language: string | null; content: string }) {
+function CodeBlock({
+  language,
+  content,
+  onDoubleClick,
+}: {
+  language: string | null;
+  content: string;
+  onDoubleClick?: (event: MouseEvent<HTMLElement>) => void;
+}) {
   const normalizedLanguage = normalizeLanguage(language, content);
   const formattedContent = formatCodeContent(normalizedLanguage, content);
 
   return (
-    <figure className="markdown-code-card">
+    <figure className="markdown-code-card" onDoubleClick={onDoubleClick}>
       <figcaption className="markdown-code-header">
         <span>{getLanguageLabel(normalizedLanguage)}</span>
         <button
@@ -280,75 +447,191 @@ function CodeBlock({ language, content }: { language: string | null; content: st
   );
 }
 
-function handleFloatingHeadingClick(event: MouseEvent<HTMLElement>) {
-  const target = event.target;
-
-  if (target instanceof Element && target.closest(".markdown-heading-action-button")) {
-    return;
-  }
-
-  if (!jumpFloatingHeadingToStart(event.currentTarget)) {
-    return;
-  }
-
-  event.preventDefault();
-  event.stopPropagation();
+function InlineHeadingEditor({
+  block,
+  className,
+  inlineEdit,
+}: {
+  block: Extract<MarkdownBlock, { type: "heading" }>;
+  className: string;
+  inlineEdit: InlineEditOptions;
+}) {
+  return (
+    <h3 className={`${className} is-inline-editing`}>
+      <span className="markdown-heading-row">
+        <InlinePlainTextInput
+          ariaLabel="Edit heading"
+          className="markdown-inline-editor markdown-heading-editor"
+          value={inlineEdit.draftValue}
+          disabled={inlineEdit.isSaving}
+          onChange={inlineEdit.onChange}
+          onCommit={(value) => inlineEdit.onCommit(block, value)}
+          onCancel={inlineEdit.onCancel}
+        />
+      </span>
+    </h3>
+  );
 }
 
-function jumpFloatingHeadingToStart(heading: HTMLElement): boolean {
-  const anchor = heading.previousElementSibling;
-
-  if (!(anchor instanceof HTMLElement) || !anchor.classList.contains("markdown-heading-anchor")) {
-    return false;
-  }
-
-  if (!isFloatingStickyHeading(heading, anchor)) {
-    return false;
-  }
-
-  jumpElementToStickyStart(anchor, heading);
-  return true;
+function InlineTextBlockEditor({
+  block,
+  className,
+  inlineEdit,
+}: {
+  block: Extract<MarkdownBlock, { type: "list" | "paragraph" }>;
+  className: string;
+  inlineEdit: InlineEditOptions;
+}) {
+  return (
+    <div className={`${className} is-inline-editing`}>
+      <InlinePlainTextArea
+        ariaLabel={block.type === "list" ? "Edit list" : "Edit paragraph"}
+        className="markdown-inline-editor markdown-block-editor"
+        value={inlineEdit.draftValue}
+        disabled={inlineEdit.isSaving}
+        minRows={block.type === "list" ? 3 : 2}
+        onChange={inlineEdit.onChange}
+        onCommit={(value) => inlineEdit.onCommit(block, value)}
+        onCancel={inlineEdit.onCancel}
+      />
+    </div>
+  );
 }
 
-function isFloatingStickyHeading(heading: HTMLElement, anchor: HTMLElement): boolean {
-  const stickyTop = getStickyTop(heading);
-  const headingTop = heading.getBoundingClientRect().top;
-  const anchorTop = anchor.getBoundingClientRect().top;
+function InlineCodeEditor({
+  block,
+  inlineEdit,
+}: {
+  block: Extract<MarkdownBlock, { type: "code" }>;
+  inlineEdit: InlineEditOptions;
+}) {
+  const normalizedLanguage = normalizeLanguage(block.language, block.content);
 
-  return headingTop <= stickyTop + 1 && anchorTop < headingTop - 1;
+  return (
+    <figure className="markdown-code-card is-inline-editing">
+      <figcaption className="markdown-code-header">
+        <span>{getLanguageLabel(normalizedLanguage)}</span>
+      </figcaption>
+      <InlinePlainTextArea
+        ariaLabel="Edit code"
+        className={`markdown-inline-editor markdown-code-editor language-${normalizedLanguage}`}
+        value={inlineEdit.draftValue}
+        disabled={inlineEdit.isSaving}
+        minRows={4}
+        onChange={inlineEdit.onChange}
+        onCommit={(value) => inlineEdit.onCommit(block, value)}
+        onCancel={inlineEdit.onCancel}
+      />
+    </figure>
+  );
 }
 
-function jumpElementToStickyStart(anchor: HTMLElement, heading: HTMLElement) {
-  const scrollParent = getScrollParent(heading);
-  const stickyTop = getStickyTop(heading);
-  const anchorTop = anchor.getBoundingClientRect().top;
+function InlinePlainTextInput({
+  ariaLabel,
+  className,
+  value,
+  disabled,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  ariaLabel: string;
+  className: string;
+  value: string;
+  disabled: boolean;
+  onChange(value: string): void;
+  onCommit(value: string): void;
+  onCancel(): void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  if (!scrollParent || scrollParent === document.documentElement || scrollParent === document.body) {
-    window.scrollTo({ top: window.scrollY + anchorTop - stickyTop, behavior: "auto" });
-    return;
-  }
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
 
-  const scrollParentTop = scrollParent.getBoundingClientRect().top;
-  scrollParent.scrollTo({ top: scrollParent.scrollTop + anchorTop - scrollParentTop - stickyTop, behavior: "auto" });
+  return (
+    <input
+      ref={inputRef}
+      className={className}
+      type="text"
+      aria-label={ariaLabel}
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={(event) => onCommit(event.currentTarget.value)}
+      onKeyDown={(event) => handleInlineEditorKeyDown(event, onCommit, onCancel, false)}
+    />
+  );
 }
 
-function getScrollParent(element: HTMLElement): HTMLElement | null {
-  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
-    const overflowY = window.getComputedStyle(parent).overflowY;
+function InlinePlainTextArea({
+  ariaLabel,
+  className,
+  value,
+  disabled,
+  minRows,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  ariaLabel: string;
+  className: string;
+  value: string;
+  disabled: boolean;
+  minRows: number;
+  onChange(value: string): void;
+  onCommit(value: string): void;
+  onCancel(): void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-    if (/(auto|scroll|overlay)/.test(overflowY) && parent.scrollHeight > parent.clientHeight) {
-      return parent;
+  useEffect(() => {
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      return;
     }
-  }
 
-  return document.scrollingElement instanceof HTMLElement ? document.scrollingElement : document.documentElement;
+    textarea.focus();
+    textarea.setSelectionRange(0, textarea.value.length);
+  }, []);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      className={className}
+      aria-label={ariaLabel}
+      value={value}
+      disabled={disabled}
+      rows={getInlineEditorRows(value, minRows)}
+      onChange={(event) => onChange(event.target.value)}
+      onBlur={(event) => onCommit(event.currentTarget.value)}
+      onKeyDown={(event) => handleInlineEditorKeyDown(event, onCommit, onCancel, true)}
+    />
+  );
 }
 
-function getStickyTop(element: HTMLElement): number {
-  const top = window.getComputedStyle(element).top;
-  const parsedTop = Number.parseFloat(top);
+function handleInlineEditorKeyDown(
+  event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  onCommit: (value: string) => void,
+  onCancel: () => void,
+  allowShiftEnterNewline: boolean,
+) {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    onCancel();
+    return;
+  }
 
-  return Number.isFinite(parsedTop) ? parsedTop : 0;
+  if (event.key === "Enter" && !(allowShiftEnterNewline && event.shiftKey)) {
+    event.preventDefault();
+    onCommit(event.currentTarget.value);
+  }
+}
+
+function getInlineEditorRows(value: string, minRows: number): number {
+  return Math.max(minRows, Math.min(18, value.split("\n").length + 1));
 }
 
 function splitMarkdown(markdown: string): MarkdownPart[] {
@@ -359,32 +642,54 @@ function splitMarkdown(markdown: string): MarkdownPart[] {
 
   while ((match = codeBlockPattern.exec(markdown)) !== null) {
     if (match.index > lastIndex) {
-      parts.push({ type: "text", content: markdown.slice(lastIndex, match.index) });
+      parts.push({
+        type: "text",
+        content: markdown.slice(lastIndex, match.index),
+        range: { start: lastIndex, end: match.index },
+      });
     }
+
+    const fullMatch = match[0];
+    const openingFence = fullMatch.match(/^```([^\n`]*)\n?/);
+    const contentStart = match.index + (openingFence?.[0].length ?? 3);
+    const closingStart = match.index + fullMatch.length - 3;
 
     parts.push({
       type: "code",
       language: match[1]?.trim() || null,
-      content: match[2]?.replace(/\n$/, "") ?? "",
+      content: markdown.slice(contentStart, Math.max(contentStart, closingStart)).replace(/\n$/, ""),
+      range: { start: match.index, end: match.index + fullMatch.length },
     });
-    lastIndex = match.index + match[0].length;
+    lastIndex = match.index + fullMatch.length;
   }
 
   if (lastIndex < markdown.length) {
-    parts.push({ type: "text", content: markdown.slice(lastIndex) });
+    parts.push({
+      type: "text",
+      content: markdown.slice(lastIndex),
+      range: { start: lastIndex, end: markdown.length },
+    });
   }
 
-  return parts.length > 0 ? parts : [{ type: "text", content: markdown }];
+  return parts.length > 0 ? parts : [{ type: "text", content: markdown, range: { start: 0, end: markdown.length } }];
 }
 
 function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
   let headingIndex = 0;
   const blocks: MarkdownBlock[] = splitMarkdown(markdown).flatMap((part, partIndex): MarkdownBlock[] => {
     if (part.type === "code") {
-      return [{ type: "code", key: `code-${partIndex}`, language: part.language, content: part.content }];
+      return [
+        {
+          type: "code",
+          key: `code-${partIndex}`,
+          language: part.language,
+          content: part.content,
+          range: part.range,
+        },
+      ];
     }
 
-    return parseTextBlocks(part.content, `text-${partIndex}`);
+    return parseTextBlocks(part.content, `text-${partIndex}`, part.range.start);
   });
 
   return blocks.map((block) => {
@@ -398,10 +703,12 @@ function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
   });
 }
 
-function parseTextBlocks(content: string, keyPrefix: string): MarkdownBlock[] {
+function parseTextBlocks(content: string, keyPrefix: string, sourceStart: number): MarkdownBlock[] {
   const blocks: MarkdownBlock[] = [];
-  const paragraphLines: string[] = [];
+  const paragraphLines: MarkdownLine[] = [];
   const listItems: string[] = [];
+  let listRangeStart: number | null = null;
+  let listRangeEnd: number | null = null;
   let blockIndex = 0;
 
   function nextKey(type: string) {
@@ -411,10 +718,18 @@ function parseTextBlocks(content: string, keyPrefix: string): MarkdownBlock[] {
   }
 
   function flushParagraph() {
-    const paragraph = paragraphLines.join("\n").trim();
+    const paragraph = paragraphLines.map((line) => line.content).join("\n").trim();
 
     if (paragraph) {
-      blocks.push({ type: "paragraph", key: nextKey("paragraph"), content: paragraph });
+      blocks.push({
+        type: "paragraph",
+        key: nextKey("paragraph"),
+        content: paragraph,
+        range: {
+          start: paragraphLines[0].start,
+          end: paragraphLines[paragraphLines.length - 1].end,
+        },
+      });
     }
 
     paragraphLines.length = 0;
@@ -422,57 +737,137 @@ function parseTextBlocks(content: string, keyPrefix: string): MarkdownBlock[] {
 
   function flushList() {
     if (listItems.length > 0) {
-      blocks.push({ type: "list", key: nextKey("list"), items: [...listItems] });
+      blocks.push({
+        type: "list",
+        key: nextKey("list"),
+        items: [...listItems],
+        range: { start: listRangeStart ?? 0, end: listRangeEnd ?? listRangeStart ?? 0 },
+      });
       listItems.length = 0;
+      listRangeStart = null;
+      listRangeEnd = null;
     }
   }
 
-  content
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .forEach((rawLine) => {
-      const line = rawLine.replace(/[ \t]+$/, "");
+  splitLinesWithOffsets(content, sourceStart).forEach((rawLine) => {
+    const line = rawLine.content.replace(/[ \t]+$/, "");
 
-      if (!line.trim()) {
-        flushParagraph();
-        flushList();
-        return;
-      }
-
-      const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*$/);
-
-      if (heading) {
-        flushParagraph();
-        flushList();
-
-        const level = heading[1].length;
-        blocks.push({
-          type: "heading",
-          key: nextKey("heading"),
-          level,
-          styleLevel: Math.min(level, 4),
-          headingIndex: -1,
-          content: heading[2],
-        });
-        return;
-      }
-
-      const listItem = line.match(/^\s*[-*]\s+(.+)$/);
-
-      if (listItem) {
-        flushParagraph();
-        listItems.push(listItem[1].trim());
-        return;
-      }
-
+    if (!line.trim()) {
+      flushParagraph();
       flushList();
-      paragraphLines.push(line.trim());
+      return;
+    }
+
+    const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*$/);
+
+    if (heading) {
+      flushParagraph();
+      flushList();
+
+      const level = heading[1].length;
+      blocks.push({
+        type: "heading",
+        key: nextKey("heading"),
+        level,
+        styleLevel: Math.min(level, 4),
+        headingIndex: -1,
+        content: heading[2],
+        range: { start: rawLine.start, end: rawLine.end },
+      });
+      return;
+    }
+
+    const listItem = line.match(/^\s*[-*]\s+(.+)$/);
+
+    if (listItem) {
+      flushParagraph();
+
+      if (listItems.length === 0) {
+        listRangeStart = rawLine.start;
+      }
+
+      listRangeEnd = rawLine.end;
+      listItems.push(listItem[1].trim());
+      return;
+    }
+
+    flushList();
+    paragraphLines.push({
+      content: line.trim(),
+      start: rawLine.start,
+      end: rawLine.end,
     });
+  });
 
   flushParagraph();
   flushList();
 
   return blocks;
+}
+
+type MarkdownLine = {
+  content: string;
+  start: number;
+  end: number;
+};
+
+function splitLinesWithOffsets(content: string, sourceStart: number): MarkdownLine[] {
+  const lines: MarkdownLine[] = [];
+  let lineStart = 0;
+
+  for (let index = 0; index <= content.length; index += 1) {
+    if (index !== content.length && content[index] !== "\n") {
+      continue;
+    }
+
+    lines.push({
+      content: content.slice(lineStart, index),
+      start: sourceStart + lineStart,
+      end: sourceStart + index,
+    });
+    lineStart = index + 1;
+  }
+
+  return lines;
+}
+
+function getEditableBlockValue(block: MarkdownBlock): string {
+  if (block.type === "list") {
+    return block.items.join("\n");
+  }
+
+  return block.content;
+}
+
+function replaceMarkdownBlock(markdown: string, block: MarkdownBlock, nextValue: string): string {
+  const replacement = getMarkdownBlockReplacement(block, nextValue);
+  return `${markdown.slice(0, block.range.start)}${replacement}${markdown.slice(block.range.end)}`;
+}
+
+function getMarkdownBlockReplacement(block: MarkdownBlock, nextValue: string): string {
+  const normalizedValue = nextValue.replace(/\r\n/g, "\n");
+
+  if (block.type === "heading") {
+    const headingText = normalizedValue.replace(/\s+/g, " ").trim();
+    return headingText ? `${"#".repeat(block.level)} ${headingText}` : "";
+  }
+
+  if (block.type === "list") {
+    return normalizedValue
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => `- ${line}`)
+      .join("\n");
+  }
+
+  if (block.type === "code") {
+    const language = block.language ? block.language.trim() : "";
+    const openingFence = language ? `\`\`\`${language}` : "```";
+    return `${openingFence}\n${normalizedValue.replace(/\n$/, "")}\n\`\`\``;
+  }
+
+  return normalizedValue.trim();
 }
 
 function hasCollapsibleSection(blocks: MarkdownBlock[], headingIndex: number): boolean {

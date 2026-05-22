@@ -7,9 +7,18 @@ export type ChatGptThread = {
   source: ThreadSource;
   sourceThreadId: string;
   title: string;
+  folderId?: string | null;
   headMessageId: string | null;
   tailMessageId: string | null;
   messageCount: number;
+  sortOrder?: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type NotebookFolder = {
+  id: string;
+  title: string;
   sortOrder?: number;
   createdAt: number;
   updatedAt: number;
@@ -45,6 +54,11 @@ export type ChatGptThreadInput = {
 };
 
 export type NotebookInput = {
+  title: string;
+  folderId?: string | null;
+};
+
+export type NotebookFolderInput = {
   title: string;
 };
 

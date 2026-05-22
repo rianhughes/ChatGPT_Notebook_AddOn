@@ -1,70 +1,555 @@
-import { ChevronDown, MoveDown, MoveUp, Plus, Search, Trash2 } from "lucide-react";
-import type { FormEvent, ReactNode } from "react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderPlus,
+  GripVertical,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+import type { DragEvent, FormEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
 
-import type { ChatGptThread } from "../../core/models";
-import type { ThreadMoveDirection } from "../../core/repository";
+import type { ChatGptThread, NotebookFolder } from "../../core/models";
 import { SearchBox } from "./SearchBox";
+
+const NO_FOLDER_DROP_TARGET = "__no-folder__";
+
+type FolderDropTarget = string | typeof NO_FOLDER_DROP_TARGET;
 
 type ThreadListProps = {
   threads: ChatGptThread[];
+  folders: NotebookFolder[];
   filter: string;
   newNotebookTitle: string;
+  newFolderTitle: string;
   themeToggle: ReactNode;
   selectedThreadId: string | null;
+  isFullPage?: boolean;
   onFilterChange(filter: string): void;
   onNewNotebookTitleChange(title: string): void;
+  onNewFolderTitleChange(title: string): void;
   onCreateNotebook(event: FormEvent<HTMLFormElement>): void;
+  onCreateFolder(event: FormEvent<HTMLFormElement>): void;
   onSelectThread(threadId: string): void;
-  onMoveThread(thread: ChatGptThread, direction: ThreadMoveDirection): void;
+  onRenameThread(threadId: string, title: string): void;
+  onRenameFolder(folderId: string, title: string): void;
+  onMoveThreadToFolder(thread: ChatGptThread, folderId: string | null): void;
   onDeleteThread(thread: ChatGptThread): void;
+  onDeleteFolder(folder: NotebookFolder): void;
 };
 
 export function ThreadList({
   threads,
+  folders,
   filter,
   newNotebookTitle,
+  newFolderTitle,
   themeToggle,
   selectedThreadId,
+  isFullPage = false,
   onFilterChange,
   onNewNotebookTitleChange,
+  onNewFolderTitleChange,
   onCreateNotebook,
+  onCreateFolder,
   onSelectThread,
-  onMoveThread,
+  onRenameThread,
+  onRenameFolder,
+  onMoveThreadToFolder,
   onDeleteThread,
+  onDeleteFolder,
 }: ThreadListProps) {
   const normalizedFilter = filter.trim().toLowerCase();
   const visibleThreads = normalizedFilter
     ? threads.filter((thread) => thread.title.toLowerCase().includes(normalizedFilter))
     : threads;
   const emptyMessage = normalizedFilter ? "No notebooks match that search." : "No saved notebooks yet.";
+  const folderIds = new Set(folders.map((folder) => folder.id));
+  const shouldGroupThreads = isFullPage && folders.length > 0;
+  const canDragThreads = shouldGroupThreads;
+  const unfiledThreads = visibleThreads.filter((thread) => getThreadFolderId(thread) === null);
   const [searchOpen, setSearchOpen] = useState(Boolean(normalizedFilter));
   const [createOpen, setCreateOpen] = useState(false);
+  const [folderCreateOpen, setFolderCreateOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [folderExpansionOverrides, setFolderExpansionOverrides] = useState<Map<FolderDropTarget, boolean>>(
+    () => new Map(),
+  );
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [editingThreadTitle, setEditingThreadTitle] = useState("");
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editingFolderTitle, setEditingFolderTitle] = useState("");
+  const [draggingThreadId, setDraggingThreadId] = useState<string | null>(null);
+  const [dragOverFolderTarget, setDragOverFolderTarget] = useState<FolderDropTarget | null>(null);
+  const canCollapse = !isFullPage;
+  const panelCollapsed = canCollapse && collapsed;
 
   useEffect(() => {
     if (normalizedFilter) {
       setSearchOpen(true);
       setCollapsed(false);
+      setFolderExpansionOverrides(new Map());
     }
   }, [normalizedFilter]);
 
+  function getThreadFolderId(thread: ChatGptThread): string | null {
+    return thread.folderId && folderIds.has(thread.folderId) ? thread.folderId : null;
+  }
+
+  function getFolderIdFromDropTarget(target: FolderDropTarget): string | null {
+    return target === NO_FOLDER_DROP_TARGET ? null : target;
+  }
+
+  function getDraggedThread(event?: DragEvent<HTMLElement>): ChatGptThread | null {
+    const dataTransferThreadId = event?.dataTransfer.getData("text/plain") || null;
+    const threadId = draggingThreadId ?? dataTransferThreadId;
+
+    if (!threadId) {
+      return null;
+    }
+
+    return threads.find((thread) => thread.id === threadId) ?? null;
+  }
+
+  function getFolderGroupClassName(target: FolderDropTarget): string {
+    const classes = ["folder-group"];
+
+    if (draggingThreadId) {
+      classes.push("is-drop-target");
+    }
+
+    if (dragOverFolderTarget === target) {
+      classes.push("is-drag-over");
+    }
+
+    if (isFolderCollapsed(target)) {
+      classes.push("is-collapsed");
+    }
+
+    return classes.join(" ");
+  }
+
+  function isFolderCollapsed(target: FolderDropTarget): boolean {
+    return getFolderCollapsedFromOverrides(target, folderExpansionOverrides);
+  }
+
+  function getFolderCollapsedFromOverrides(
+    target: FolderDropTarget,
+    overrides: Map<FolderDropTarget, boolean>,
+  ): boolean {
+    const expandedOverride = overrides.get(target);
+    return expandedOverride === undefined ? !normalizedFilter : !expandedOverride;
+  }
+
+  function toggleFolderCollapsed(target: FolderDropTarget) {
+    setFolderExpansionOverrides((currentOverrides) => {
+      const nextOverrides = new Map(currentOverrides);
+      nextOverrides.set(target, getFolderCollapsedFromOverrides(target, currentOverrides));
+
+      return nextOverrides;
+    });
+  }
+
+  function startThreadRename(thread: ChatGptThread) {
+    setEditingThreadId(thread.id);
+    setEditingThreadTitle(thread.title);
+    setEditingFolderId(null);
+    setEditingFolderTitle("");
+  }
+
+  function cancelThreadRename() {
+    setEditingThreadId(null);
+    setEditingThreadTitle("");
+  }
+
+  function submitThreadRename(thread: ChatGptThread, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const nextTitle = editingThreadTitle.trim();
+
+    if (nextTitle && nextTitle !== thread.title) {
+      onRenameThread(thread.id, nextTitle);
+    }
+
+    cancelThreadRename();
+  }
+
+  function startFolderRename(folder: NotebookFolder) {
+    setEditingFolderId(folder.id);
+    setEditingFolderTitle(folder.title);
+    setEditingThreadId(null);
+    setEditingThreadTitle("");
+  }
+
+  function cancelFolderRename() {
+    setEditingFolderId(null);
+    setEditingFolderTitle("");
+  }
+
+  function submitFolderRename(folder: NotebookFolder, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const nextTitle = editingFolderTitle.trim();
+
+    if (nextTitle && nextTitle !== folder.title) {
+      onRenameFolder(folder.id, nextTitle);
+    }
+
+    cancelFolderRename();
+  }
+
+  function handleThreadDragStart(thread: ChatGptThread, event: DragEvent<HTMLElement>) {
+    if (!canDragThreads) {
+      event.preventDefault();
+      return;
+    }
+
+    const dragStartTarget = event.target instanceof HTMLElement ? event.target : null;
+
+    if (dragStartTarget?.closest("input, select, textarea")) {
+      event.preventDefault();
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", thread.id);
+    setDraggingThreadId(thread.id);
+  }
+
+  function handleThreadDragEnd() {
+    setDraggingThreadId(null);
+    setDragOverFolderTarget(null);
+  }
+
+  function handleFolderDragOver(target: FolderDropTarget, event: DragEvent<HTMLElement>) {
+    if (!getDraggedThread(event)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDragOverFolderTarget(target);
+  }
+
+  function handleFolderDragLeave(target: FolderDropTarget, event: DragEvent<HTMLElement>) {
+    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+
+    if (nextTarget && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    setDragOverFolderTarget((currentTarget) => (currentTarget === target ? null : currentTarget));
+  }
+
+  function handleFolderDrop(target: FolderDropTarget, event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+
+    const draggedThread = getDraggedThread(event);
+    setDraggingThreadId(null);
+    setDragOverFolderTarget(null);
+
+    if (!draggedThread) {
+      return;
+    }
+
+    const folderId = getFolderIdFromDropTarget(target);
+
+    if (getThreadFolderId(draggedThread) === folderId) {
+      return;
+    }
+
+    onMoveThreadToFolder(draggedThread, folderId);
+  }
+
+  function renderThreadRows(groupThreads: ChatGptThread[]) {
+    return (
+      <ul className="thread-list">
+        {groupThreads.map((thread) => {
+          const messageLabel = `${thread.messageCount} ${thread.messageCount === 1 ? "message" : "messages"}`;
+          const isEditingThread = editingThreadId === thread.id;
+          const isDragging = draggingThreadId === thread.id;
+
+          return (
+            <li
+              draggable={canDragThreads && !isEditingThread}
+              key={thread.id}
+              onDragEnd={handleThreadDragEnd}
+              onDragStart={(event) => handleThreadDragStart(thread, event)}
+            >
+              <div
+                className={`thread-row${selectedThreadId === thread.id ? " is-active" : ""}${
+                  canDragThreads ? " is-draggable" : ""
+                }${isDragging ? " is-dragging" : ""}`}
+              >
+                {canDragThreads ? (
+                  <span className="thread-drag-handle" title="Drag notebook to a folder" aria-hidden="true">
+                    <GripVertical size={15} aria-hidden="true" />
+                  </span>
+                ) : null}
+                {isEditingThread ? (
+                  <form className="thread-rename-form" onSubmit={(event) => submitThreadRename(thread, event)}>
+                    <label className="sr-only" htmlFor={`thread-${thread.id}-title`}>
+                      Notebook name
+                    </label>
+                    <input
+                      id={`thread-${thread.id}-title`}
+                      className="input thread-rename-input"
+                      type="text"
+                      value={editingThreadTitle}
+                      onChange={(event) => setEditingThreadTitle(event.target.value)}
+                      autoFocus
+                    />
+                    <button
+                      className="icon-button"
+                      type="submit"
+                      title="Save notebook name"
+                      aria-label="Save notebook name"
+                      disabled={!editingThreadTitle.trim()}
+                    >
+                      <Check size={15} aria-hidden="true" />
+                    </button>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title="Cancel edit"
+                      aria-label="Cancel edit"
+                      onClick={cancelThreadRename}
+                    >
+                      <X size={15} aria-hidden="true" />
+                    </button>
+                  </form>
+                ) : (
+                  <button className="thread-button" type="button" onClick={() => onSelectThread(thread.id)}>
+                    <span className="thread-copy">
+                      <span className="thread-title">{thread.title}</span>
+                      <span className="thread-meta">
+                        {thread.source === "notebook" ? messageLabel : `ChatGPT · ${messageLabel}`}
+                      </span>
+                    </span>
+                    <ChevronRight className="thread-open-icon" size={16} aria-hidden="true" />
+                  </button>
+                )}
+                <div className="thread-row-actions">
+                  {isEditingThread ? null : (
+                    <button
+                      className="icon-button thread-edit-button"
+                      type="button"
+                      title="Edit notebook name"
+                      aria-label={`Edit notebook name: ${thread.title}`}
+                      onClick={() => startThreadRename(thread)}
+                    >
+                      <Pencil size={15} aria-hidden="true" />
+                    </button>
+                  )}
+                  <button
+                    className="icon-button danger thread-delete-button"
+                    type="button"
+                    title="Delete notebook"
+                    aria-label={`Delete ${thread.title}`}
+                    onClick={() => onDeleteThread(thread)}
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    );
+  }
+
+  function renderGroupedThreads() {
+    return (
+      <div className="folder-group-list">
+        {folders.map((folder) => {
+          const folderThreads = visibleThreads.filter((thread) => getThreadFolderId(thread) === folder.id);
+          const dropTarget = folder.id;
+          const folderContentId = `folder-${folder.id}-notebooks`;
+          const folderCollapsed = isFolderCollapsed(dropTarget);
+          const isEditingFolder = editingFolderId === folder.id;
+
+          if (normalizedFilter && folderThreads.length === 0 && !draggingThreadId) {
+            return null;
+          }
+
+          return (
+            <section
+              className={getFolderGroupClassName(dropTarget)}
+              key={folder.id}
+              aria-labelledby={`folder-${folder.id}`}
+              onDragEnter={(event) => handleFolderDragOver(dropTarget, event)}
+              onDragLeave={(event) => handleFolderDragLeave(dropTarget, event)}
+              onDragOver={(event) => handleFolderDragOver(dropTarget, event)}
+              onDrop={(event) => handleFolderDrop(dropTarget, event)}
+            >
+              <div className="folder-group-header">
+                {isEditingFolder ? (
+                  <form className="folder-rename-form" onSubmit={(event) => submitFolderRename(folder, event)}>
+                    <span id={`folder-${folder.id}`} className="sr-only">
+                      {folder.title}
+                    </span>
+                    <label className="sr-only" htmlFor={`folder-${folder.id}-title-input`}>
+                      Folder name
+                    </label>
+                    <input
+                      id={`folder-${folder.id}-title-input`}
+                      className="input folder-rename-input"
+                      type="text"
+                      value={editingFolderTitle}
+                      onChange={(event) => setEditingFolderTitle(event.target.value)}
+                      autoFocus
+                    />
+                    <button
+                      className="icon-button"
+                      type="submit"
+                      title="Save folder name"
+                      aria-label="Save folder name"
+                      disabled={!editingFolderTitle.trim()}
+                    >
+                      <Check size={15} aria-hidden="true" />
+                    </button>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title="Cancel edit"
+                      aria-label="Cancel edit"
+                      onClick={cancelFolderRename}
+                    >
+                      <X size={15} aria-hidden="true" />
+                    </button>
+                  </form>
+                ) : (
+                  <button
+                    className="folder-group-title-button"
+                    type="button"
+                    title={folderCollapsed ? `Expand ${folder.title}` : `Collapse ${folder.title}`}
+                    aria-expanded={!folderCollapsed}
+                    aria-controls={folderContentId}
+                    onClick={() => toggleFolderCollapsed(dropTarget)}
+                  >
+                    <ChevronDown className="folder-group-collapse-icon" size={16} aria-hidden="true" />
+                    <Folder size={16} aria-hidden="true" />
+                    <span id={`folder-${folder.id}`} className="folder-group-title">
+                      {folder.title}
+                    </span>
+                    <span className="folder-group-count">
+                      {folderThreads.length} {folderThreads.length === 1 ? "notebook" : "notebooks"}
+                    </span>
+                  </button>
+                )}
+                <div className="folder-row-actions">
+                  {isEditingFolder ? null : (
+                    <button
+                      className="icon-button folder-edit-button"
+                      type="button"
+                      title="Edit folder name"
+                      aria-label={`Edit folder name: ${folder.title}`}
+                      onClick={() => startFolderRename(folder)}
+                    >
+                      <Pencil size={15} aria-hidden="true" />
+                    </button>
+                  )}
+                  <button
+                    className="icon-button danger folder-delete-button"
+                    type="button"
+                    title="Delete folder"
+                    aria-label={`Delete folder ${folder.title}`}
+                    onClick={() => onDeleteFolder(folder)}
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              <div id={folderContentId} className="folder-group-content" hidden={folderCollapsed}>
+                {folderThreads.length > 0 ? (
+                  renderThreadRows(folderThreads)
+                ) : (
+                  <div className="folder-empty-state">
+                    {draggingThreadId ? "Drop notebook here." : "No notebooks in this folder."}
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })}
+        {unfiledThreads.length > 0 || draggingThreadId ? (
+          <section
+            className={getFolderGroupClassName(NO_FOLDER_DROP_TARGET)}
+            aria-labelledby="unfiled-notebooks-title"
+            onDragEnter={(event) => handleFolderDragOver(NO_FOLDER_DROP_TARGET, event)}
+            onDragLeave={(event) => handleFolderDragLeave(NO_FOLDER_DROP_TARGET, event)}
+            onDragOver={(event) => handleFolderDragOver(NO_FOLDER_DROP_TARGET, event)}
+            onDrop={(event) => handleFolderDrop(NO_FOLDER_DROP_TARGET, event)}
+          >
+            <div className="folder-group-header">
+              <button
+                className="folder-group-title-button"
+                type="button"
+                title={isFolderCollapsed(NO_FOLDER_DROP_TARGET) ? "Expand No folder" : "Collapse No folder"}
+                aria-expanded={!isFolderCollapsed(NO_FOLDER_DROP_TARGET)}
+                aria-controls="unfiled-notebooks-list"
+                onClick={() => toggleFolderCollapsed(NO_FOLDER_DROP_TARGET)}
+              >
+                <ChevronDown className="folder-group-collapse-icon" size={16} aria-hidden="true" />
+                <Folder size={16} aria-hidden="true" />
+                <span id="unfiled-notebooks-title" className="folder-group-title">
+                  No folder
+                </span>
+                <span className="folder-group-count">
+                  {unfiledThreads.length} {unfiledThreads.length === 1 ? "notebook" : "notebooks"}
+                </span>
+              </button>
+            </div>
+            <div
+              id="unfiled-notebooks-list"
+              className="folder-group-content"
+              hidden={isFolderCollapsed(NO_FOLDER_DROP_TARGET)}
+            >
+              {unfiledThreads.length > 0 ? (
+                renderThreadRows(unfiledThreads)
+              ) : (
+                <div className="folder-empty-state">Drop notebook here.</div>
+              )}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <nav className={`thread-panel${collapsed ? " is-collapsed" : ""}`} aria-labelledby="notebook-list-title">
+    <nav
+      className={`thread-panel${panelCollapsed ? " is-collapsed" : ""}${isFullPage ? " is-full-page" : ""}`}
+      aria-labelledby="notebook-list-title"
+    >
       <div className="thread-panel-header">
-        <button
-          className="thread-panel-title-button"
-          type="button"
-          title={collapsed ? "Show notebooks" : "Hide notebooks"}
-          aria-expanded={!collapsed}
-          aria-controls="notebook-list-body"
-          onClick={() => setCollapsed((isCollapsed) => !isCollapsed)}
-        >
-          <ChevronDown className="thread-panel-collapse-icon" size={16} aria-hidden="true" />
-          <span id="notebook-list-title" className="thread-panel-title">
-            Notebooks
-          </span>
-        </button>
+        {canCollapse ? (
+          <button
+            className="thread-panel-title-button"
+            type="button"
+            title={panelCollapsed ? "Show notebooks" : "Hide notebooks"}
+            aria-expanded={!panelCollapsed}
+            aria-controls="notebook-list-body"
+            onClick={() => setCollapsed((isCollapsed) => !isCollapsed)}
+          >
+            <ChevronDown className="thread-panel-collapse-icon" size={16} aria-hidden="true" />
+            <span id="notebook-list-title" className="thread-panel-title">
+              Notebooks
+            </span>
+          </button>
+        ) : (
+          <div className="thread-panel-title-button is-static">
+            <span id="notebook-list-title" className="thread-panel-title">
+              Notebooks
+            </span>
+          </div>
+        )}
         <div className="thread-panel-actions">
           <button
             className={`icon-button${searchOpen ? " is-active" : ""}`}
@@ -92,10 +577,25 @@ export function ThreadList({
           >
             <Plus size={17} aria-hidden="true" />
           </button>
+          {isFullPage ? (
+            <button
+              className={`icon-button folder-create-button${folderCreateOpen ? " is-active" : ""}`}
+              type="button"
+              title="Create folder"
+              aria-label="Create folder"
+              aria-expanded={folderCreateOpen}
+              onClick={() => {
+                setCollapsed(false);
+                setFolderCreateOpen((isOpen) => !isOpen);
+              }}
+            >
+              <FolderPlus size={17} aria-hidden="true" />
+            </button>
+          ) : null}
           {themeToggle}
         </div>
       </div>
-      {!collapsed && (searchOpen || createOpen) ? (
+      {!panelCollapsed && (searchOpen || createOpen || folderCreateOpen) ? (
         <div className="thread-panel-tools">
           {searchOpen ? (
             <SearchBox
@@ -128,64 +628,38 @@ export function ThreadList({
               </button>
             </form>
           ) : null}
+          {folderCreateOpen ? (
+            <form className="notebook-create-form" onSubmit={onCreateFolder}>
+              <label className="notebook-title-field">
+                <span className="sr-only">Folder name</span>
+                <input
+                  className="input"
+                  type="text"
+                  value={newFolderTitle}
+                  placeholder="New folder"
+                  onChange={(event) => onNewFolderTitleChange(event.target.value)}
+                />
+              </label>
+              <button
+                className="icon-button folder-create-button"
+                type="submit"
+                title="Create folder"
+                aria-label="Create folder"
+                disabled={!newFolderTitle.trim()}
+              >
+                <FolderPlus size={18} aria-hidden="true" />
+              </button>
+            </form>
+          ) : null}
         </div>
       ) : null}
-      <div id="notebook-list-body" className="thread-panel-body" hidden={collapsed}>
-        {visibleThreads.length === 0 ? (
+      <div id="notebook-list-body" className="thread-panel-body" hidden={panelCollapsed}>
+        {visibleThreads.length === 0 && (normalizedFilter || folders.length === 0) ? (
           <div className="empty-state">{emptyMessage}</div>
+        ) : shouldGroupThreads ? (
+          renderGroupedThreads()
         ) : (
-          <ul className="thread-list">
-            {visibleThreads.map((thread, index) => {
-              const messageLabel = `${thread.messageCount} ${
-                thread.messageCount === 1 ? "message" : "messages"
-              }`;
-              const reorderDisabled = Boolean(normalizedFilter);
-
-              return (
-                <li key={thread.id}>
-                  <div className={`thread-row${selectedThreadId === thread.id ? " is-active" : ""}`}>
-                    <button className="thread-button" type="button" onClick={() => onSelectThread(thread.id)}>
-                      <span className="thread-title">{thread.title}</span>
-                      <span className="thread-meta">
-                        {thread.source === "notebook" ? messageLabel : `ChatGPT · ${messageLabel}`}
-                      </span>
-                    </button>
-                    <div className="thread-row-actions">
-                      <button
-                        className="icon-button thread-reorder-button"
-                        type="button"
-                        title={reorderDisabled ? "Clear search to reorder notebooks" : "Move notebook up"}
-                        aria-label={`Move ${thread.title} up`}
-                        disabled={reorderDisabled || index === 0}
-                        onClick={() => onMoveThread(thread, "up")}
-                      >
-                        <MoveUp size={15} aria-hidden="true" />
-                      </button>
-                      <button
-                        className="icon-button thread-reorder-button"
-                        type="button"
-                        title={reorderDisabled ? "Clear search to reorder notebooks" : "Move notebook down"}
-                        aria-label={`Move ${thread.title} down`}
-                        disabled={reorderDisabled || index === visibleThreads.length - 1}
-                        onClick={() => onMoveThread(thread, "down")}
-                      >
-                        <MoveDown size={15} aria-hidden="true" />
-                      </button>
-                      <button
-                        className="icon-button danger thread-delete-button"
-                        type="button"
-                        title="Delete notebook"
-                        aria-label={`Delete ${thread.title}`}
-                        onClick={() => onDeleteThread(thread)}
-                      >
-                        <Trash2 size={15} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+          renderThreadRows(visibleThreads)
         )}
       </div>
     </nav>

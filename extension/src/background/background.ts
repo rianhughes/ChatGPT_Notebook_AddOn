@@ -8,6 +8,7 @@ import {
 import {
   type ExtensionMessage,
   type InsertTextInChatGptResponse,
+  type OpenSidebarWindowResponse,
   type SaveChatGptMessageResponse,
   isExtensionMessage,
 } from "../core/ports";
@@ -18,6 +19,7 @@ import {
   setActiveSaveTargetThread,
 } from "../core/repository";
 import { createSidebarAdapter } from "./sidebarAdapter";
+import { initializeDetachedSidebarWindowTracking, openDetachedSidebarWindow } from "./sidebarWindow";
 
 type ActionClickTab = {
   id?: number;
@@ -34,6 +36,7 @@ type ActionApi = {
 const sidebarAdapter = createSidebarAdapter();
 
 void sidebarAdapter.initialize();
+initializeDetachedSidebarWindowTracking();
 
 const actionApi = ((browser as unknown as { action?: ActionApi; browserAction?: ActionApi }).action ??
   (browser as unknown as { browserAction?: ActionApi }).browserAction) as ActionApi | undefined;
@@ -103,6 +106,17 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
           error: "Open a ChatGPT tab before inserting notes.",
         }
       );
+    }
+    case "OPEN_SIDEBAR_WINDOW": {
+      try {
+        await openDetachedSidebarWindow();
+        return { opened: true } satisfies OpenSidebarWindowResponse;
+      } catch {
+        return {
+          opened: false,
+          error: "Could not open notes window.",
+        } satisfies OpenSidebarWindowResponse;
+      }
     }
     case "CHATGPT_THREAD_CHANGED":
     case "SAVE_CHATGPT_MESSAGE_RESULT":

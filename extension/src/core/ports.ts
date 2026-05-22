@@ -9,6 +9,7 @@ export type RuntimeMessageType =
   | "GET_ACTIVE_SAVE_TARGET"
   | "SET_ACTIVE_SAVE_TARGET"
   | "ACTIVE_SAVE_TARGET_CHANGED"
+  | "OPEN_SIDEBAR_WINDOW"
   | "INSERT_TEXT_IN_CHATGPT"
   | "SOURCE_MESSAGE_SAVED_STATE_CHANGED"
   | "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES";
@@ -62,6 +63,11 @@ export type InsertTextInChatGptMessage = {
   payload: { text: string };
 };
 
+export type OpenSidebarWindowMessage = {
+  type: "OPEN_SIDEBAR_WINDOW";
+  payload: Record<string, never>;
+};
+
 export type SourceMessageSavedStateChangedMessage = {
   type: "SOURCE_MESSAGE_SAVED_STATE_CHANGED";
   payload: {
@@ -87,6 +93,7 @@ export type ExtensionMessage =
   | GetActiveSaveTargetMessage
   | SetActiveSaveTargetMessage
   | ActiveSaveTargetChangedMessage
+  | OpenSidebarWindowMessage
   | InsertTextInChatGptMessage
   | SourceMessageSavedStateChangedMessage
   | RequestSavedStateForVisibleMessagesMessage;
@@ -106,6 +113,11 @@ export type ActiveSaveTargetResponse = ChatGptThread | null;
 
 export type InsertTextInChatGptResponse = {
   inserted: boolean;
+  error?: string;
+};
+
+export type OpenSidebarWindowResponse = {
+  opened: boolean;
   error?: string;
 };
 
@@ -144,6 +156,8 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
           value.payload.source === "notebook" ||
           value.payload.source === null)
       );
+    case "OPEN_SIDEBAR_WINDOW":
+      return true;
     case "INSERT_TEXT_IN_CHATGPT":
       return typeof value.payload.text === "string";
     case "SOURCE_MESSAGE_SAVED_STATE_CHANGED":

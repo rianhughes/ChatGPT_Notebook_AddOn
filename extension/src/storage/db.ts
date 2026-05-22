@@ -1,11 +1,12 @@
 import Dexie, { type Table } from "dexie";
 
-import type { AppSetting, ChatGptThread, SavedMessage } from "../core/models";
+import type { AppSetting, ChatGptThread, NotebookFolder, SavedMessage } from "../core/models";
 
 export class NotesDatabase extends Dexie {
   threads!: Table<ChatGptThread, string>;
   messages!: Table<SavedMessage, string>;
   settings!: Table<AppSetting, string>;
+  folders!: Table<NotebookFolder, string>;
 
   constructor() {
     super("chatgpt-notes-sidebar");
@@ -19,6 +20,13 @@ export class NotesDatabase extends Dexie {
       threads: "&id, &[source+sourceThreadId], updatedAt",
       messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
       settings: "&key, updatedAt",
+    });
+
+    this.version(3).stores({
+      threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
+      messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
+      settings: "&key, updatedAt",
+      folders: "&id, sortOrder, updatedAt",
     });
   }
 }

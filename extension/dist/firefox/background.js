@@ -1094,6 +1094,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         return typeof value.payload.threadId === "string" || value.payload.threadId === null;
       case "ACTIVE_SAVE_TARGET_CHANGED":
         return (typeof value.payload.threadId === "string" || value.payload.threadId === null) && (typeof value.payload.title === "string" || value.payload.title === null) && (value.payload.source === "chatgpt" || value.payload.source === "notebook" || value.payload.source === null);
+      case "OPEN_SIDEBAR_WINDOW":
+        return true;
       case "INSERT_TEXT_IN_CHATGPT":
         return typeof value.payload.text === "string";
       case "SOURCE_MESSAGE_SAVED_STATE_CHANGED":
@@ -4164,6 +4166,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       __publicField(this, "threads");
       __publicField(this, "messages");
       __publicField(this, "settings");
+      __publicField(this, "folders");
       this.version(1).stores({
         threads: "&id, &[source+sourceThreadId], updatedAt",
         messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt"
@@ -4172,6 +4175,12 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         threads: "&id, &[source+sourceThreadId], updatedAt",
         messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
         settings: "&key, updatedAt"
+      });
+      this.version(3).stores({
+        threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
+        messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, prevId, nextId, updatedAt",
+        settings: "&key, updatedAt",
+        folders: "&id, sortOrder, updatedAt"
       });
     }
   }
@@ -4322,6 +4331,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       source: "chatgpt",
       sourceThreadId: input.sourceThreadId,
       title: input.title || "Untitled ChatGPT conversation",
+      folderId: null,
       headMessageId: null,
       tailMessageId: null,
       messageCount: 0,
@@ -4428,8 +4438,62 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
   function createSidebarAdapter() {
     return createFirefoxSidebarAdapter();
   }
+  const SIDEBAR_PAGE = "sidebar.html";
+  const SIDEBAR_WINDOW_WIDTH = 460;
+  const SIDEBAR_WINDOW_HEIGHT = 760;
+  let detachedSidebarWindowId = null;
+  function initializeDetachedSidebarWindowTracking() {
+    browser.windows.onRemoved.addListener((windowId) => {
+      if (windowId === detachedSidebarWindowId) {
+        detachedSidebarWindowId = null;
+      }
+    });
+  }
+  async function openDetachedSidebarWindow() {
+    const sidebarUrl = browser.runtime.getURL(SIDEBAR_PAGE);
+    if (typeof detachedSidebarWindowId === "number") {
+      try {
+        await browser.windows.update(detachedSidebarWindowId, { focused: true });
+        return;
+      } catch {
+        detachedSidebarWindowId = null;
+      }
+    }
+    if (await focusExistingDetachedSidebarWindow(sidebarUrl)) {
+      return;
+    }
+    const createdWindow = await browser.windows.create({
+      focused: true,
+      height: SIDEBAR_WINDOW_HEIGHT,
+      type: "popup",
+      url: sidebarUrl,
+      width: SIDEBAR_WINDOW_WIDTH
+    });
+    detachedSidebarWindowId = typeof createdWindow.id === "number" ? createdWindow.id : null;
+  }
+  async function focusExistingDetachedSidebarWindow(sidebarUrl) {
+    try {
+      const popupWindows = await browser.windows.getAll({ populate: true, windowTypes: ["popup"] });
+      const existingWindow = popupWindows.find(
+        (popupWindow) => {
+          var _a2;
+          return (_a2 = popupWindow.tabs) == null ? void 0 : _a2.some((tab) => tab.url === sidebarUrl);
+        }
+      );
+      if (typeof (existingWindow == null ? void 0 : existingWindow.id) !== "number") {
+        return false;
+      }
+      detachedSidebarWindowId = existingWindow.id;
+      await browser.windows.update(existingWindow.id, { focused: true });
+      return true;
+    } catch {
+      detachedSidebarWindowId = null;
+      return false;
+    }
+  }
   const sidebarAdapter = createSidebarAdapter();
   void sidebarAdapter.initialize();
+  initializeDetachedSidebarWindowTracking();
   const actionApi = browser.action ?? browser.browserAction;
   (_a = actionApi == null ? void 0 : actionApi.onClicked) == null ? void 0 : _a.addListener((tab) => {
     void openSidebarFromActionClick(tab);
@@ -4487,6 +4551,17 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           inserted: false,
           error: "Open a ChatGPT tab before inserting notes."
         };
+      }
+      case "OPEN_SIDEBAR_WINDOW": {
+        try {
+          await openDetachedSidebarWindow();
+          return { opened: true };
+        } catch {
+          return {
+            opened: false,
+            error: "Could not open notes window."
+          };
+        }
       }
       case "CHATGPT_THREAD_CHANGED":
       case "SAVE_CHATGPT_MESSAGE_RESULT":

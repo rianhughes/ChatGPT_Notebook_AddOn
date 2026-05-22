@@ -32,6 +32,133 @@ describe("MarkdownContent", () => {
     expect(html).toContain("markdown-heading-level-2");
   });
 
+  it("saves an inline paragraph edit with Enter and exits edit mode", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const onMarkdownChange = vi.fn();
+
+    await act(() => {
+      root.render(
+        <MarkdownContent
+          markdown={["## Alpha", "", "Original paragraph.", "", "- One", "- Two"].join("\n")}
+          onMarkdownChange={onMarkdownChange}
+        />,
+      );
+    });
+
+    const paragraph = host.querySelector<HTMLElement>(".markdown-paragraph");
+
+    await act(() => {
+      paragraph?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+
+    const editor = host.querySelector<HTMLTextAreaElement>("textarea[aria-label='Edit paragraph']");
+
+    expect(editor).not.toBeNull();
+    expect(editor?.value).toBe("Original paragraph.");
+
+    await act(() => {
+      setControlValue(editor!, "Edited paragraph.");
+    });
+
+    await act(async () => {
+      editor?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onMarkdownChange).toHaveBeenCalledWith(
+      ["## Alpha", "", "Edited paragraph.", "", "- One", "- Two"].join("\n"),
+    );
+    expect(host.querySelector<HTMLTextAreaElement>("textarea[aria-label='Edit paragraph']")).toBeNull();
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("saves inline heading, list, and code edits with markdown syntax preserved", async () => {
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const onMarkdownChange = vi.fn();
+    const markdown = ["## Alpha", "", "- One", "- Two", "", "```ts", "const old = true;", "```"].join("\n");
+
+    await act(() => {
+      root.render(<MarkdownContent markdown={markdown} onMarkdownChange={onMarkdownChange} />);
+    });
+
+    const headingButton = host.querySelector<HTMLButtonElement>(".markdown-heading-button");
+
+    await act(() => {
+      headingButton?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+
+    const headingEditor = host.querySelector<HTMLInputElement>("input[aria-label='Edit heading']");
+
+    await act(() => {
+      setControlValue(headingEditor!, "Beta");
+    });
+    await act(async () => {
+      headingEditor?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onMarkdownChange).toHaveBeenLastCalledWith(
+      ["## Beta", "", "- One", "- Two", "", "```ts", "const old = true;", "```"].join("\n"),
+    );
+
+    await act(() => {
+      root.render(<MarkdownContent markdown={markdown} onMarkdownChange={onMarkdownChange} />);
+    });
+
+    const list = host.querySelector<HTMLElement>(".markdown-list");
+
+    await act(() => {
+      list?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+
+    const listEditor = host.querySelector<HTMLTextAreaElement>("textarea[aria-label='Edit list']");
+
+    await act(() => {
+      setControlValue(listEditor!, "First\nSecond\nThird");
+    });
+    await act(async () => {
+      listEditor?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onMarkdownChange).toHaveBeenLastCalledWith(
+      ["## Alpha", "", "- First", "- Second", "- Third", "", "```ts", "const old = true;", "```"].join("\n"),
+    );
+
+    await act(() => {
+      root.render(<MarkdownContent markdown={markdown} onMarkdownChange={onMarkdownChange} />);
+    });
+
+    const code = host.querySelector<HTMLElement>(".markdown-code-card");
+
+    await act(() => {
+      code?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+
+    const codeEditor = host.querySelector<HTMLTextAreaElement>("textarea[aria-label='Edit code']");
+
+    await act(() => {
+      setControlValue(codeEditor!, "const next = true;");
+    });
+    await act(async () => {
+      codeEditor?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(onMarkdownChange).toHaveBeenLastCalledWith(
+      ["## Alpha", "", "- One", "- Two", "", "```ts", "const next = true;", "```"].join("\n"),
+    );
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
   it("collapses a heading section up to the next peer heading", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);
@@ -79,36 +206,26 @@ describe("MarkdownContent", () => {
     });
   });
 
-  it("jumps a floating heading back to its starting position instead of toggling", async () => {
+  it("renders headings without floating anchors", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);
-    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
-
-    Object.defineProperty(window, "scrollY", { value: 120, configurable: true });
 
     await act(() => {
       root.render(<MarkdownContent markdown={["## Alpha", "", "Alpha body"].join("\n")} />);
     });
 
-    const heading = host.querySelector<HTMLElement>(".markdown-heading");
     const anchor = host.querySelector<HTMLElement>(".markdown-heading-anchor");
     const alphaButton = host.querySelector<HTMLButtonElement>(".markdown-heading-button");
 
-    expect(heading).not.toBeNull();
-    expect(anchor).not.toBeNull();
+    expect(anchor).toBeNull();
     expect(alphaButton).not.toBeNull();
-
-    heading!.style.top = "10px";
-    vi.spyOn(heading!, "getBoundingClientRect").mockReturnValue(getRect({ top: 10 }));
-    vi.spyOn(anchor!, "getBoundingClientRect").mockReturnValue(getRect({ top: -30 }));
 
     await act(() => {
       alphaButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(alphaButton?.getAttribute("aria-expanded")).toBe("true");
-    expect(host.textContent).toContain("Alpha body");
-    expect(scrollTo).toHaveBeenCalledWith({ top: 80, behavior: "auto" });
+    expect(alphaButton?.getAttribute("aria-expanded")).toBe("false");
+    expect(host.textContent).not.toContain("Alpha body");
 
     await act(() => {
       root.unmount();
@@ -240,16 +357,8 @@ describe("MarkdownContent", () => {
   });
 });
 
-function getRect(rect: Partial<DOMRect>): DOMRect {
-  return {
-    x: rect.x ?? rect.left ?? 0,
-    y: rect.y ?? rect.top ?? 0,
-    width: rect.width ?? 0,
-    height: rect.height ?? 0,
-    top: rect.top ?? 0,
-    right: rect.right ?? 0,
-    bottom: rect.bottom ?? 0,
-    left: rect.left ?? 0,
-    toJSON: () => ({}),
-  };
+function setControlValue(control: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(control), "value")?.set;
+  valueSetter?.call(control, value);
+  control.dispatchEvent(new Event("input", { bubbles: true }));
 }

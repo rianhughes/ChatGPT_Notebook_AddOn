@@ -1,22 +1,31 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  appendMessage,
   appendSavedMessageFromChatGpt,
+  createFolder,
   createNotebook,
+  deleteFolder,
   deleteMessage,
   deleteSelectedTextFromMessage,
   deleteThread,
   getActiveSaveTargetThread,
+  getFolders,
   getMessagesInOrder,
   getSavedStateForVisibleMessages,
   getThread,
   getThreadBySource,
   getThreads,
   mergeMessages,
+  moveMessageAfterMessage,
+  moveThreadToFolder,
   renameNotebook,
+  renameFolder,
   renameThreadTitle,
   reorderMessage,
   reorderThread,
+  restoreDeletedMessage,
+  restoreNotebookSnapshot,
   setActiveSaveTargetThread,
   updateMessageContent,
 } from "../src/core/repository";
@@ -63,6 +72,26 @@ describe("repository", () => {
     await deleteMessage(first.thread.id, messages[2].id);
 
     expect(await getMessagesInOrder(first.thread.id)).toEqual([]);
+  });
+
+  it("restores a deleted message at its original position", async () => {
+    const first = await appendSavedMessageFromChatGpt(saveInput("a", "alpha"));
+    await appendSavedMessageFromChatGpt(saveInput("b", "bravo"));
+    await appendSavedMessageFromChatGpt(saveInput("c", "charlie"));
+    const initialMessages = await getMessagesInOrder(first.thread.id);
+
+    await deleteMessage(first.thread.id, initialMessages[1].id);
+    expect((await getMessagesInOrder(first.thread.id)).map((message) => message.contentText)).toEqual([
+      "alpha",
+      "charlie",
+    ]);
+
+    const restored = await restoreDeletedMessage(initialMessages[1]);
+    const restoredMessages = await getMessagesInOrder(first.thread.id);
+
+    expect(restored.id).toBe(initialMessages[1].id);
+    expect(restoredMessages.map((message) => message.contentText)).toEqual(["alpha", "bravo", "charlie"]);
+    expect((await getThread(first.thread.id))?.messageCount).toBe(3);
   });
 
   it("deletes selected text from a saved message and keeps code block formatting", async () => {
@@ -158,6 +187,32 @@ describe("repository", () => {
     expect(thread?.messageCount).toBe(2);
   });
 
+  it("restores a whole notebook snapshot after merges, deletes, and edits", async () => {
+    const first = await appendSavedMessageFromChatGpt(saveInput("a", "alpha"));
+    await appendSavedMessageFromChatGpt(saveInput("b", "bravo"));
+    await appendSavedMessageFromChatGpt(saveInput("c", "charlie"));
+    const snapshot = {
+      thread: (await getThread(first.thread.id))!,
+      messages: await getMessagesInOrder(first.thread.id),
+    };
+    const initialMessageIds = snapshot.messages.map((message) => message.id);
+
+    await mergeMessages(first.thread.id, [initialMessageIds[0], initialMessageIds[1]]);
+    await deleteMessage(first.thread.id, initialMessageIds[2]);
+    await renameThreadTitle(first.thread.id, "Changed title");
+
+    expect(await getMessagesInOrder(first.thread.id)).toHaveLength(1);
+
+    await restoreNotebookSnapshot(snapshot);
+    const restoredThread = await getThread(first.thread.id);
+    const restoredMessages = await getMessagesInOrder(first.thread.id);
+
+    expect(restoredThread?.title).toBe(snapshot.thread.title);
+    expect(restoredThread?.messageCount).toBe(3);
+    expect(restoredMessages.map((message) => message.id)).toEqual(initialMessageIds);
+    expect(restoredMessages.map((message) => message.contentText)).toEqual(["alpha", "bravo", "charlie"]);
+  });
+
   it("reorders messages inside a notebook without losing linked-list integrity", async () => {
     const first = await appendSavedMessageFromChatGpt(saveInput("a", "alpha"));
     await appendSavedMessageFromChatGpt(saveInput("b", "bravo"));
@@ -179,6 +234,27 @@ describe("repository", () => {
     ]);
   });
 
+  it("moves messages directly after any target message for drag reordering", async () => {
+    const first = await appendSavedMessageFromChatGpt(saveInput("a", "alpha"));
+    await appendSavedMessageFromChatGpt(saveInput("b", "bravo"));
+    await appendSavedMessageFromChatGpt(saveInput("c", "charlie"));
+    const initialMessages = await getMessagesInOrder(first.thread.id);
+
+    await moveMessageAfterMessage(first.thread.id, initialMessages[2].id, null);
+    expect((await getMessagesInOrder(first.thread.id)).map((message) => message.contentText)).toEqual([
+      "charlie",
+      "alpha",
+      "bravo",
+    ]);
+
+    await moveMessageAfterMessage(first.thread.id, initialMessages[2].id, initialMessages[1].id);
+    expect((await getMessagesInOrder(first.thread.id)).map((message) => message.contentText)).toEqual([
+      "alpha",
+      "bravo",
+      "charlie",
+    ]);
+  });
+
   it("saves ChatGPT messages into the active user notebook", async () => {
     const notebook = await createNotebook({ title: "Backend notes" });
     await setActiveSaveTargetThread(notebook.id);
@@ -196,6 +272,24 @@ describe("repository", () => {
       "source:notebook-message": true,
       "source:other": false,
     });
+  });
+
+  it("appends manually created notes to a notebook", async () => {
+    const notebook = await createNotebook({ title: "Scratch" });
+    const note = await appendMessage(notebook.id, {
+      sourceMessageId: null,
+      sourceMessageKey: "manual:note",
+      contentHash: "hash-manual-note",
+      role: "note",
+      title: "New note",
+      contentMarkdown: "",
+      contentText: "",
+    });
+    const messages = await getMessagesInOrder(notebook.id);
+
+    expect(note.title).toBe("New note");
+    expect(messages.map((message) => message.id)).toEqual([note.id]);
+    expect((await getThread(notebook.id))?.messageCount).toBe(1);
   });
 
   it("renames notebooks but not ChatGPT conversation threads", async () => {
@@ -225,6 +319,27 @@ describe("repository", () => {
 
     await reorderThread(third.id, "down");
     expect((await getThreads()).map((thread) => thread.id)).toEqual([first.id, third.id, second.id]);
+  });
+
+  it("creates folders and moves notebooks between folder groups", async () => {
+    const folder = await createFolder({ title: "Work" });
+    const personal = await createFolder({ title: "Personal" });
+    const first = await createNotebook({ title: "First" });
+    const second = await createNotebook({ title: "Second", folderId: folder.id });
+
+    expect((await getFolders()).map((item) => item.id)).toEqual([personal.id, folder.id]);
+    expect((await getThread(second.id))?.folderId).toBe(folder.id);
+
+    await moveThreadToFolder(first.id, folder.id);
+    expect((await getThread(first.id))?.folderId).toBe(folder.id);
+
+    await renameFolder(personal.id, "Life");
+    expect((await getFolders()).map((item) => item.title)).toEqual(["Life", "Work"]);
+
+    await deleteFolder(folder.id);
+    expect((await getFolders()).map((item) => item.id)).toEqual([personal.id]);
+    expect((await getThread(first.id))?.folderId).toBeNull();
+    expect((await getThread(second.id))?.folderId).toBeNull();
   });
 
   it("deletes a notebook, its messages, and active save target setting", async () => {

@@ -1010,6 +1010,8 @@
         return typeof value.payload.threadId === "string" || value.payload.threadId === null;
       case "ACTIVE_SAVE_TARGET_CHANGED":
         return (typeof value.payload.threadId === "string" || value.payload.threadId === null) && (typeof value.payload.title === "string" || value.payload.title === null) && (value.payload.source === "chatgpt" || value.payload.source === "notebook" || value.payload.source === null);
+      case "OPEN_SIDEBAR_WINDOW":
+        return true;
       case "INSERT_TEXT_IN_CHATGPT":
         return typeof value.payload.text === "string";
       case "SOURCE_MESSAGE_SAVED_STATE_CHANGED":
