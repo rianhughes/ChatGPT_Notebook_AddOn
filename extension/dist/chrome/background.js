@@ -4246,13 +4246,15 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       __publicField(this, "folders");
       __publicField(this, "aiOperationProposals");
       __publicField(this, "assets");
-      this.version(6).stores({
+      __publicField(this, "storedBackups");
+      this.version(7).stores({
         threads: "&id, &[source+sourceThreadId], folderId, updatedAt",
         messages: "&id, threadId, &[threadId+sourceMessageKey], sourceMessageId, [threadId+sortOrder], sortOrder, updatedAt",
         settings: "&key, updatedAt",
         folders: "&id, sortOrder, updatedAt",
         aiOperationProposals: "&id, sourceThreadId, createdAt, updatedAt",
-        assets: "&id, threadId, messageId, contentHash, updatedAt"
+        assets: "&id, threadId, messageId, contentHash, updatedAt",
+        storedBackups: "&id, kind, backupDate, updatedAt"
       });
     }
   }
@@ -4398,6 +4400,23 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       value: error,
       updatedAt: Date.now()
     });
+  }
+  async function saveStoredNotebookBackup(input) {
+    const existing = await notesDb.storedBackups.get(input.id);
+    const timestamp = Date.now();
+    const storedBackup = {
+      ...input,
+      createdAt: (existing == null ? void 0 : existing.createdAt) ?? timestamp,
+      updatedAt: timestamp
+    };
+    await notesDb.storedBackups.put(storedBackup);
+    return storedBackup;
+  }
+  async function deleteStoredDailyBackupsBefore(cutoffDate) {
+    const expired = await notesDb.storedBackups.where("kind").equals("daily").filter((backup) => backup.backupDate !== null && backup.backupDate < cutoffDate).primaryKeys();
+    if (expired.length > 0) {
+      await notesDb.storedBackups.bulkDelete(expired);
+    }
   }
   async function saveAiOperationProposal(operationPackage) {
     const timestamp = Date.now();
@@ -4770,8 +4789,8 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     return Number.isFinite(revision) ? revision : 0;
   }
   const AUTOSAVE_DELAY_MS = 1e4;
-  const BACKUP_DIR = "ChatGPT Notebook Backups";
   const BACKUP_RETENTION_DAYS = 7;
+  const LATEST_BACKUP_ID = "autosave:latest";
   let autosaveTimer = null;
   let writeInProgress = false;
   let dirtyWhileWriting = false;
@@ -4827,15 +4846,23 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const contents = `${JSON.stringify(backupData, null, 2)}
 `;
       const backupDate = backupData.exportedAt.slice(0, 10);
-      await downloadTextFile({
+      await saveStoredNotebookBackup({
+        id: LATEST_BACKUP_ID,
+        kind: "latest",
+        backupDate: null,
         contents,
-        filename: `${BACKUP_DIR}/chatgpt-notes-autobackup-latest.json`,
-        overwrite: true
+        filename: "chatgpt-notes-autobackup-latest.json",
+        dataRevision: backupData.dataRevision,
+        exportedAt: backupData.exportedAt
       });
-      await downloadTextFile({
+      await saveStoredNotebookBackup({
+        id: `autosave:daily:${backupDate}`,
+        kind: "daily",
+        backupDate,
         contents,
-        filename: `${BACKUP_DIR}/chatgpt-notes-autobackup-${backupDate}.json`,
-        overwrite: true
+        filename: `chatgpt-notes-autobackup-${backupDate}.json`,
+        dataRevision: backupData.dataRevision,
+        exportedAt: backupData.exportedAt
       });
       await cleanupOldDailyBackups(backupDate);
       await markNotebookBackupSucceeded({
@@ -4869,60 +4896,13 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
     return "idle";
   }
-  async function downloadTextFile(input) {
-    const url = createDownloadUrl(input.contents);
-    try {
-      await browser.downloads.download({
-        url,
-        filename: input.filename,
-        saveAs: false,
-        conflictAction: input.overwrite ? "overwrite" : "uniquify"
-      });
-    } finally {
-      if (url.startsWith("blob:")) {
-        URL.revokeObjectURL(url);
-      }
-    }
-  }
-  function createDownloadUrl(contents) {
-    if (typeof URL.createObjectURL === "function") {
-      return URL.createObjectURL(new Blob([contents], { type: "application/json;charset=utf-8" }));
-    }
-    return `data:application/json;charset=utf-8,${encodeURIComponent(contents)}`;
-  }
   async function cleanupOldDailyBackups(currentDate) {
     const cutoff = /* @__PURE__ */ new Date(`${currentDate}T00:00:00.000Z`);
     cutoff.setUTCDate(cutoff.getUTCDate() - BACKUP_RETENTION_DAYS + 1);
     try {
-      const downloads = await browser.downloads.search({ query: ["chatgpt-notes-autobackup-"] });
-      await Promise.all(
-        downloads.map(async (download) => {
-          if (!download.id || !download.filename) {
-            return;
-          }
-          const date = getDailyBackupDateFromFilename(download.filename);
-          if (!date || date >= cutoff) {
-            return;
-          }
-          try {
-            await browser.downloads.removeFile(download.id);
-          } catch {
-          }
-          try {
-            await browser.downloads.erase({ id: download.id });
-          } catch {
-          }
-        })
-      );
+      await deleteStoredDailyBackupsBefore(cutoff.toISOString().slice(0, 10));
     } catch {
     }
-  }
-  function getDailyBackupDateFromFilename(filename) {
-    const match = /chatgpt-notes-autobackup-(\d{4}-\d{2}-\d{2})\.json$/.exec(filename);
-    if (!match) {
-      return null;
-    }
-    return /* @__PURE__ */ new Date(`${match[1]}T00:00:00.000Z`);
   }
   const SIDEBAR_PAGE = "sidebar.html";
   const SIDEBAR_WINDOW_WIDTH = 460;

@@ -41,6 +41,18 @@ export type NotebookAsset = {
   updatedAt: number;
 };
 
+export type StoredNotebookBackup = {
+  id: string;
+  kind: "latest" | "daily";
+  backupDate: string | null;
+  filename: string;
+  contents: string;
+  dataRevision: number;
+  exportedAt: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type AppSettingKey =
   | "activeSaveTargetThreadId"
   | "dataRevision"

@@ -16,6 +16,7 @@ import type {
   SaveChatGptMessageInput,
   SaveChatGptMessageResult,
   SavedMessage,
+  StoredNotebookBackup,
   ThreadSource,
 } from "./models";
 import type { NotebookBackupSnapshot, RestoredNotebookBackupData } from "./notebookBackup";
@@ -56,6 +57,8 @@ export type NotebookAutosaveMetadata = {
   lastBackupError: string | null;
   lastDailyBackupDate: string | null;
 };
+
+export type StoredNotebookBackupInput = Omit<StoredNotebookBackup, "createdAt" | "updatedAt">;
 
 export async function getAiOperationProposals(): Promise<AiOperationProposal[]> {
   return (await notesDb.aiOperationProposals.toArray()).sort((left, right) => left.createdAt - right.createdAt);
@@ -150,6 +153,39 @@ export async function markNotebookBackupFailed(error: string): Promise<void> {
     value: error,
     updatedAt: Date.now(),
   });
+}
+
+export async function saveStoredNotebookBackup(input: StoredNotebookBackupInput): Promise<StoredNotebookBackup> {
+  const existing = await notesDb.storedBackups.get(input.id);
+  const timestamp = Date.now();
+  const storedBackup: StoredNotebookBackup = {
+    ...input,
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  };
+
+  await notesDb.storedBackups.put(storedBackup);
+  return storedBackup;
+}
+
+export async function getStoredNotebookBackup(backupId: string): Promise<StoredNotebookBackup | null> {
+  return (await notesDb.storedBackups.get(backupId)) ?? null;
+}
+
+export async function getStoredNotebookBackups(): Promise<StoredNotebookBackup[]> {
+  return (await notesDb.storedBackups.toArray()).sort(compareStoredBackups);
+}
+
+export async function deleteStoredDailyBackupsBefore(cutoffDate: string): Promise<void> {
+  const expired = await notesDb.storedBackups
+    .where("kind")
+    .equals("daily")
+    .filter((backup) => backup.backupDate !== null && backup.backupDate < cutoffDate)
+    .primaryKeys();
+
+  if (expired.length > 0) {
+    await notesDb.storedBackups.bulkDelete(expired);
+  }
 }
 
 export async function mergeNotebookDataFromBackup(
@@ -335,6 +371,14 @@ export async function mergeNotebookDataFromBackup(
     aiOperationProposals: backup.aiOperationProposals.length,
     assets: backup.assets.length,
   };
+}
+
+function compareStoredBackups(left: StoredNotebookBackup, right: StoredNotebookBackup): number {
+  if (left.kind !== right.kind) {
+    return left.kind === "latest" ? -1 : 1;
+  }
+
+  return (right.backupDate ?? right.exportedAt).localeCompare(left.backupDate ?? left.exportedAt);
 }
 
 export async function saveAiOperationProposal(operationPackage: AiOperationPackage): Promise<AiOperationProposal> {

@@ -1,17 +1,18 @@
-import browser from "../browser/extensionApi";
 import { createNotebookBackupData } from "../core/notebookBackup";
 import type { AutosaveStatusResponse, AutosaveStatusState } from "../core/ports";
 import {
+  deleteStoredDailyBackupsBefore,
   getNotebookAutosaveMetadata,
   getNotebookBackupSnapshot,
   markNotebookBackupFailed,
   markNotebookBackupSucceeded,
   recordNotebookDataMutation,
+  saveStoredNotebookBackup,
 } from "../core/repository";
 
 const AUTOSAVE_DELAY_MS = 10_000;
-const BACKUP_DIR = "ChatGPT Notebook Backups";
 const BACKUP_RETENTION_DAYS = 7;
+const LATEST_BACKUP_ID = "autosave:latest";
 
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let writeInProgress = false;
@@ -80,15 +81,23 @@ async function flushAutosave(): Promise<void> {
     const contents = `${JSON.stringify(backupData, null, 2)}\n`;
     const backupDate = backupData.exportedAt.slice(0, 10);
 
-    await downloadTextFile({
+    await saveStoredNotebookBackup({
+      id: LATEST_BACKUP_ID,
+      kind: "latest",
+      backupDate: null,
       contents,
-      filename: `${BACKUP_DIR}/chatgpt-notes-autobackup-latest.json`,
-      overwrite: true,
+      filename: "chatgpt-notes-autobackup-latest.json",
+      dataRevision: backupData.dataRevision,
+      exportedAt: backupData.exportedAt,
     });
-    await downloadTextFile({
+    await saveStoredNotebookBackup({
+      id: `autosave:daily:${backupDate}`,
+      kind: "daily",
+      backupDate,
       contents,
-      filename: `${BACKUP_DIR}/chatgpt-notes-autobackup-${backupDate}.json`,
-      overwrite: true,
+      filename: `chatgpt-notes-autobackup-${backupDate}.json`,
+      dataRevision: backupData.dataRevision,
+      exportedAt: backupData.exportedAt,
     });
     await cleanupOldDailyBackups(backupDate);
     await markNotebookBackupSucceeded({
@@ -129,78 +138,13 @@ function getAutosaveState(metadata: Awaited<ReturnType<typeof getNotebookAutosav
   return "idle";
 }
 
-async function downloadTextFile(input: {
-  contents: string;
-  filename: string;
-  overwrite: boolean;
-}): Promise<void> {
-  const url = createDownloadUrl(input.contents);
-
-  try {
-    await browser.downloads.download({
-      url,
-      filename: input.filename,
-      saveAs: false,
-      conflictAction: input.overwrite ? "overwrite" : "uniquify",
-    });
-  } finally {
-    if (url.startsWith("blob:")) {
-      URL.revokeObjectURL(url);
-    }
-  }
-}
-
-function createDownloadUrl(contents: string): string {
-  if (typeof URL.createObjectURL === "function") {
-    return URL.createObjectURL(new Blob([contents], { type: "application/json;charset=utf-8" }));
-  }
-
-  return `data:application/json;charset=utf-8,${encodeURIComponent(contents)}`;
-}
-
 async function cleanupOldDailyBackups(currentDate: string): Promise<void> {
   const cutoff = new Date(`${currentDate}T00:00:00.000Z`);
   cutoff.setUTCDate(cutoff.getUTCDate() - BACKUP_RETENTION_DAYS + 1);
 
   try {
-    const downloads = await browser.downloads.search({ query: ["chatgpt-notes-autobackup-"] });
-
-    await Promise.all(
-      downloads.map(async (download) => {
-        if (!download.id || !download.filename) {
-          return;
-        }
-
-        const date = getDailyBackupDateFromFilename(download.filename);
-
-        if (!date || date >= cutoff) {
-          return;
-        }
-
-        try {
-          await browser.downloads.removeFile(download.id);
-        } catch {
-          // The file may already be gone or the browser may not allow removal.
-        }
-
-        try {
-          await browser.downloads.erase({ id: download.id });
-        } catch {
-          // Download history cleanup is best-effort.
-        }
-      }),
-    );
+    await deleteStoredDailyBackupsBefore(cutoff.toISOString().slice(0, 10));
   } catch {
     // Retention cleanup must not make the backup itself fail.
   }
-}
-
-function getDailyBackupDateFromFilename(filename: string): Date | null {
-  const match = /chatgpt-notes-autobackup-(\d{4}-\d{2}-\d{2})\.json$/.exec(filename);
-
-  if (!match) {
-    return null;
-  }
-
-  return new Date(`${match[1]}T00:00:00.000Z`);
 }
