@@ -5090,18 +5090,18 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
   }
   async function openSidebarFromActionClick(tab) {
-    if (tab) {
-      try {
-        await ensureChatGptContentScript(tab);
-      } catch {
-      }
-    }
     try {
       await sidebarAdapter.openForCurrentWindow({
         windowId: tab == null ? void 0 : tab.windowId,
         tabId: tab == null ? void 0 : tab.id
       });
     } catch {
+    }
+    if (tab) {
+      try {
+        await ensureChatGptContentScript(tab);
+      } catch {
+      }
     }
   }
 })();

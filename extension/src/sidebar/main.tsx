@@ -8,6 +8,7 @@ import {
   Clock,
   ListCollapse,
   Moon,
+  Plus,
   Sun,
   Sunset,
   TriangleAlert,
@@ -1440,6 +1441,16 @@ function App() {
             <div className="notebook-detail-actions">
               {autosaveFeedback}
               <button
+                className="icon-button notebook-detail-new-note-button"
+                type="button"
+                title="Create new note"
+                aria-label="Create new note"
+                disabled={!selectedThread}
+                onClick={() => void createNoteInSelectedNotebook()}
+              >
+                <Plus size={18} aria-hidden="true" />
+              </button>
+              <button
                 className="icon-button notebook-detail-notes-toggle"
                 type="button"
                 title={noteCollapseToggleLabel}
@@ -1481,8 +1492,6 @@ function App() {
             onRenameThread={updateSelectedThreadTitle}
             onRequestExport={(formatId) => void exportSelectedNotebook(formatId)}
             onRequestPrintExport={() => void printSelectedNotebookAsPdf()}
-            onCreateNote={() => void createNoteInSelectedNotebook()}
-            onInsertEditableContext={() => void insertEditableNotebookContext()}
             onUndoNotebook={() => void undoNotebookChange()}
             onOpenStandaloneWindow={() => void openStandaloneWindow()}
             onStartMergeSelection={startMergeSelection}

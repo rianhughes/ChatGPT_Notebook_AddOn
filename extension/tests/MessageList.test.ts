@@ -42,7 +42,7 @@ describe("MessageList note headers", () => {
     });
   });
 
-  it("finds the selected note for Backspace text deletion", () => {
+  it("finds the selected note for keyboard text deletion", () => {
     document.body.innerHTML = [
       `<article data-note-message-id="a"><p id="alpha">Alpha beta</p></article>`,
       `<article data-note-message-id="b"><p>Gamma</p></article>`,
@@ -63,7 +63,7 @@ describe("MessageList note headers", () => {
     );
   });
 
-  it("leaves Backspace alone inside text editing controls", () => {
+  it("leaves keyboard deletion alone inside text editing controls", () => {
     const input = document.createElement("input");
     const textarea = document.createElement("textarea");
     const button = document.createElement("button");
@@ -73,7 +73,7 @@ describe("MessageList note headers", () => {
     expect(isEditableKeyboardTarget(button)).toBe(false);
   });
 
-  it("deletes highlighted note text when Backspace is pressed", async () => {
+  it.each(["Backspace", "Delete"])("deletes highlighted note text when %s is pressed", async (key) => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -118,7 +118,7 @@ describe("MessageList note headers", () => {
     window.getSelection()?.addRange(range);
 
     await act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace" }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key }));
     });
 
     expect(onDeleteSelectedText).toHaveBeenCalledWith(note);
@@ -128,7 +128,7 @@ describe("MessageList note headers", () => {
     });
   });
 
-  it("keeps the note view still after deleting highlighted text with Backspace", async () => {
+  it.each(["Backspace", "Delete"])("keeps the note view still after deleting highlighted text with %s", async (key) => {
     const scrollHost = document.createElement("div");
     const host = document.createElement("div");
     const root = createRoot(host);
@@ -181,7 +181,7 @@ describe("MessageList note headers", () => {
     window.getSelection()?.addRange(range);
 
     await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace" }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key }));
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -476,6 +476,120 @@ describe("MessageList note headers", () => {
     expect(titleInput?.value).toBe("New note");
     expect(document.activeElement).toBe(titleInput);
     expect(onAutoEditMessageHandled).toHaveBeenCalledTimes(1);
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("saves a newly opened note when its title field submits", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = { ...message("new-note", ""), role: "note" as const, title: "New note" };
+    const onSaveMessageEdit = vi.fn(async () => undefined);
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          autoEditMessageId: note.id,
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onAutoEditMessageHandled: vi.fn(),
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
+          onSaveMessageEdit,
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText: vi.fn(),
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    const titleInput = host.querySelector<HTMLInputElement>(".message-editor-title-input");
+    const editorForm = host.querySelector<HTMLFormElement>(".message-editor");
+
+    expect(titleInput).not.toBeNull();
+    expect(editorForm).not.toBeNull();
+
+    await act(() => {
+      setControlValue(titleInput!, "Saved from Enter");
+    });
+
+    await act(async () => {
+      editorForm?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    expect(onSaveMessageEdit).toHaveBeenCalledWith(note, "Saved from Enter", "");
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("cancels a newly opened note edit when Escape is pressed", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = { ...message("new-note", ""), role: "note" as const, title: "New note" };
+    const onSaveMessageEdit = vi.fn(async () => undefined);
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          autoEditMessageId: note.id,
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onAutoEditMessageHandled: vi.fn(),
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
+          onSaveMessageEdit,
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText: vi.fn(),
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    const titleInput = host.querySelector<HTMLInputElement>(".message-editor-title-input");
+
+    expect(titleInput).not.toBeNull();
+
+    await act(() => {
+      setControlValue(titleInput!, "Unsaved title");
+      titleInput?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+
+    expect(host.querySelector(".message-editor")).toBeNull();
+    expect(host.querySelector(".message-header-text")?.textContent).toBe("New note");
+    expect(onSaveMessageEdit).not.toHaveBeenCalled();
 
     await act(() => {
       root.unmount();
@@ -863,7 +977,7 @@ function getFirstTextNode(element: Element | null): Text | null {
   return node instanceof Text ? node : null;
 }
 
-function setControlValue(control: HTMLTextAreaElement, value: string) {
+function setControlValue(control: HTMLInputElement | HTMLTextAreaElement, value: string) {
   const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(control), "value");
   descriptor?.set?.call(control, value);
   control.dispatchEvent(new Event("input", { bubbles: true }));

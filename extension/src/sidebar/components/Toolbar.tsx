@@ -5,7 +5,6 @@ import {
   FileDown,
   Merge,
   Pencil,
-  Plus,
   Undo2,
   X,
 } from "lucide-react";
@@ -30,8 +29,6 @@ type ToolbarProps = {
   onRenameThread(threadId: string, title: string): Promise<void>;
   onRequestExport(formatId: NotebookExportFormatId): void;
   onRequestPrintExport(): void;
-  onCreateNote(): void;
-  onInsertEditableContext(): void;
   onUndoNotebook(): void;
   onOpenStandaloneWindow(): void;
   onStartMergeSelection(): void;
@@ -53,8 +50,6 @@ export function Toolbar({
   onRenameThread,
   onRequestExport,
   onRequestPrintExport,
-  onCreateNote,
-  onInsertEditableContext,
   onUndoNotebook,
   onOpenStandaloneWindow,
   onStartMergeSelection,
@@ -165,28 +160,21 @@ export function Toolbar({
             />
             <div className="message-tools-actions">
               <div className="message-tools-action-row">
-                <button
-                  className="tool-button secondary selected-thread-new-note-button"
-                  type="button"
-                  title="Create new note"
-                  aria-label="Create new note"
-                  disabled={!selectedThread}
-                  onClick={onCreateNote}
-                >
-                  <Plus size={16} aria-hidden="true" />
-                  New note
-                </button>
-                <button
-                  className="tool-button secondary selected-thread-ai-context-button"
-                  type="button"
-                  title="Send editable notebook context to ChatGPT"
-                  aria-label="Send editable notebook context to ChatGPT"
-                  disabled={!selectedThread}
-                  onClick={onInsertEditableContext}
-                >
-                  <Bot size={16} aria-hidden="true" />
-                  AI context
-                </button>
+                <span className="disabled-tool-tooltip-wrapper" tabIndex={0}>
+                  <button
+                    className="tool-button secondary selected-thread-ai-context-button"
+                    type="button"
+                    aria-label="AI context coming soon"
+                    aria-describedby="ai-context-coming-soon-tooltip"
+                    disabled
+                  >
+                    <Bot size={16} aria-hidden="true" />
+                    AI context
+                  </button>
+                  <span id="ai-context-coming-soon-tooltip" className="tool-hover-tooltip" role="tooltip">
+                    This will be added soon.
+                  </span>
+                </span>
                 {mergeMode ? (
                   <>
                     <button

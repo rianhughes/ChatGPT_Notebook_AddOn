@@ -152,8 +152,12 @@ export function MessageList({
   }, [editingMessageId]);
 
   useEffect(() => {
-    function deleteSelectedTextOnBackspace(event: globalThis.KeyboardEvent) {
-      if (event.key !== "Backspace" || event.defaultPrevented || isEditableKeyboardTarget(event.target)) {
+    function deleteSelectedTextWithKeyboard(event: globalThis.KeyboardEvent) {
+      if (
+        (event.key !== "Backspace" && event.key !== "Delete") ||
+        event.defaultPrevented ||
+        isEditableKeyboardTarget(event.target)
+      ) {
         return;
       }
 
@@ -171,8 +175,8 @@ export function MessageList({
       });
     }
 
-    window.addEventListener("keydown", deleteSelectedTextOnBackspace);
-    return () => window.removeEventListener("keydown", deleteSelectedTextOnBackspace);
+    window.addEventListener("keydown", deleteSelectedTextWithKeyboard);
+    return () => window.removeEventListener("keydown", deleteSelectedTextWithKeyboard);
   }, [messages, onDeleteSelectedText]);
 
   useEffect(() => {
@@ -584,7 +588,21 @@ export function MessageList({
                 onDragStart={(event) => handleSelectedTextDragStart(message, event)}
               >
                 {isEditing ? (
-                  <div className="message-editor">
+                  <form
+                    className="message-editor"
+                    onKeyDown={(event) => {
+                      if (event.key !== "Escape") {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      cancelEdit();
+                    }}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void saveEdit(message);
+                    }}
+                  >
                     <label className="message-editor-title-field">
                       <span className="sr-only">Note header</span>
                       <input
@@ -634,14 +652,14 @@ export function MessageList({
                         <Sparkles size={16} aria-hidden="true" />
                         Format
                       </button>
-                      <button className="tool-button" type="button" onClick={() => void saveEdit(message)}>
+                      <button className="tool-button" type="submit">
                         Save
                       </button>
                       <button className="tool-button secondary" type="button" onClick={cancelEdit}>
                         Cancel
                       </button>
                     </div>
-                  </div>
+                  </form>
                 ) : noteHeader.bodyMarkdown.trim() ? (
                   <>
                     {selectedTextEditor ? (

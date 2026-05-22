@@ -167,14 +167,6 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
 }
 
 async function openSidebarFromActionClick(tab?: ActionClickTab): Promise<void> {
-  if (tab) {
-    try {
-      await ensureChatGptContentScript(tab);
-    } catch {
-      // The active tab may not allow script injection, or the script may already be present.
-    }
-  }
-
   try {
     await sidebarAdapter.openForCurrentWindow({
       windowId: tab?.windowId,
@@ -182,5 +174,13 @@ async function openSidebarFromActionClick(tab?: ActionClickTab): Promise<void> {
     });
   } catch {
     // Chrome can already open the side panel via setPanelBehavior.
+  }
+
+  if (tab) {
+    try {
+      await ensureChatGptContentScript(tab);
+    } catch {
+      // The active tab may not allow script injection, or the script may already be present.
+    }
   }
 }

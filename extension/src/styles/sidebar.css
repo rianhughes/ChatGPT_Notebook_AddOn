@@ -968,6 +968,42 @@ button {
   color: var(--color-accent-text);
 }
 
+.disabled-tool-tooltip-wrapper {
+  position: relative;
+  display: inline-flex;
+  outline: none;
+}
+
+.tool-hover-tooltip {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  display: none;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 24px));
+  transform: translateX(-50%);
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: var(--color-surface-strong);
+  color: var(--color-control-text);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.disabled-tool-tooltip-wrapper:hover .tool-hover-tooltip,
+.disabled-tool-tooltip-wrapper:focus-visible .tool-hover-tooltip,
+.disabled-tool-tooltip-wrapper:focus-within .tool-hover-tooltip {
+  display: block;
+}
+
+.disabled-tool-tooltip-wrapper:focus-visible .tool-button {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
 .icon-button {
   display: inline-flex;
   width: 34px;
