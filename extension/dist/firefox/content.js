@@ -1243,6 +1243,12 @@ ${codeFence(text, getCodeLanguage(node))}
 
 `;
       }
+      case "TABLE":
+        return `
+
+${renderTable(node, context)}
+
+`;
       case "CODE":
         if (context.inPre) {
           return node.textContent ?? "";
@@ -1299,7 +1305,72 @@ ${rendered.trim()}
     return Array.from(node.childNodes).map((child) => renderNode(child, context)).join("");
   }
   function normalizeMarkdown(markdown) {
-    return markdown.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    return convertTabDelimitedTablesOutsideCode(markdown).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  function renderTable(table, context) {
+    const rows = Array.from(table.querySelectorAll("tr")).map(
+      (row) => Array.from(row.children).filter((cell) => cell instanceof HTMLElement && (cell.tagName === "TH" || cell.tagName === "TD")).map((cell) => normalizeTableCell(renderChildren(cell, context)))
+    ).filter((row) => row.length > 0);
+    return renderMarkdownTable(rows);
+  }
+  function convertTabDelimitedTablesOutsideCode(markdown) {
+    const parts = [];
+    const codeBlockPattern = /```[\s\S]*?```/g;
+    let lastIndex = 0;
+    let match;
+    while ((match = codeBlockPattern.exec(markdown)) !== null) {
+      parts.push(convertTabDelimitedTables(markdown.slice(lastIndex, match.index)));
+      parts.push(match[0]);
+      lastIndex = match.index + match[0].length;
+    }
+    parts.push(convertTabDelimitedTables(markdown.slice(lastIndex)));
+    return parts.join("");
+  }
+  function convertTabDelimitedTables(markdown) {
+    const lines = markdown.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    const convertedLines = [];
+    let index = 0;
+    while (index < lines.length) {
+      if (!isTabDelimitedTableLine(lines[index])) {
+        convertedLines.push(lines[index]);
+        index += 1;
+        continue;
+      }
+      const tableLines = [];
+      while (index < lines.length && isTabDelimitedTableLine(lines[index])) {
+        tableLines.push(lines[index]);
+        index += 1;
+      }
+      if (tableLines.length < 2) {
+        convertedLines.push(...tableLines);
+        continue;
+      }
+      convertedLines.push(renderMarkdownTable(tableLines.map((line) => line.split("	").map(normalizeTableCell))));
+    }
+    return convertedLines.join("\n");
+  }
+  function isTabDelimitedTableLine(line) {
+    const cells = line.split("	");
+    return cells.length > 1 && cells.filter((cell) => cell.trim()).length > 1;
+  }
+  function renderMarkdownTable(rows) {
+    if (rows.length === 0) {
+      return "";
+    }
+    const columnCount = Math.max(...rows.map((row) => row.length));
+    const normalizedRows = rows.map((row) => padTableRow(row, columnCount));
+    const [header, ...body] = normalizedRows;
+    const separator = Array.from({ length: columnCount }, () => "---");
+    return [header, separator, ...body].map((row) => `| ${row.map(escapeMarkdownTableCell).join(" | ")} |`).join("\n");
+  }
+  function padTableRow(row, columnCount) {
+    return [...row, ...Array.from({ length: Math.max(0, columnCount - row.length) }, () => "")];
+  }
+  function normalizeTableCell(value) {
+    return value.replace(/\s+/g, " ").trim();
+  }
+  function escapeMarkdownTableCell(value) {
+    return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
   }
   function codeFence(code, language) {
     const fence = "```";

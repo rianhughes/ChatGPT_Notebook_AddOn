@@ -35,6 +35,23 @@ describe("MarkdownContent", () => {
     expect(html).toContain("markdown-heading-level-2");
   });
 
+  it("renders Markdown pipe tables as tables", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        markdown={[
+          "| Rank | Company | Role | Usefulness |",
+          "| --- | --- | --- | --- |",
+          "| 1 | Databricks | Backend Software Engineer | 9/10 |",
+          "| 2 | Cohere | Software Engineer, Internal Infrastructure | 9/10 |",
+        ].join("\n")}
+      />,
+    );
+
+    expect(html).toContain("<table class=\"markdown-table\">");
+    expect(html).toContain("Company");
+    expect(html).toContain("Software Engineer, Internal Infrastructure");
+  });
+
   it("saves an inline paragraph edit with Enter and exits edit mode", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);

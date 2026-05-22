@@ -56,6 +56,77 @@ describe("chatgptDomAdapter", () => {
     expect(extracted?.contentText).toContain("const answer = 42;");
   });
 
+  it("extracts ChatGPT HTML tables as Markdown tables", () => {
+    document.body.innerHTML = `
+      <main>
+        <div data-message-author-role="assistant" data-message-id="msg-table">
+          <div class="markdown">
+            <table>
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Company</th>
+                  <th>Role</th>
+                  <th>Usefulness of your blockchain-client project</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>1</td>
+                  <td>Databricks</td>
+                  <td>Backend Software Engineer</td>
+                  <td>9/10</td>
+                </tr>
+                <tr>
+                  <td>2</td>
+                  <td>Cohere</td>
+                  <td>Software Engineer, Internal Infrastructure</td>
+                  <td>9/10</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    `;
+
+    const [container] = findVisibleMessageContainers();
+    const extracted = extractMessageFromContainer(container);
+
+    expect(extracted?.contentMarkdown).toBe(
+      [
+        "| Rank | Company | Role | Usefulness of your blockchain-client project |",
+        "| --- | --- | --- | --- |",
+        "| 1 | Databricks | Backend Software Engineer | 9/10 |",
+        "| 2 | Cohere | Software Engineer, Internal Infrastructure | 9/10 |",
+      ].join("\n"),
+    );
+  });
+
+  it("converts tab-delimited table text into a Markdown table", () => {
+    document.body.innerHTML = `
+      <main>
+        <div data-message-author-role="assistant" data-message-id="msg-tsv-table">
+          <div class="markdown">
+            <p>Rank\tCompany\tRole\tUsefulness of your blockchain-client project<br>1\tDatabricks\tBackend Software Engineer\t9/10<br>2\tCohere\tSoftware Engineer, Internal Infrastructure\t9/10</p>
+          </div>
+        </div>
+      </main>
+    `;
+
+    const [container] = findVisibleMessageContainers();
+    const extracted = extractMessageFromContainer(container);
+
+    expect(extracted?.contentMarkdown).toBe(
+      [
+        "| Rank | Company | Role | Usefulness of your blockchain-client project |",
+        "| --- | --- | --- | --- |",
+        "| 1 | Databricks | Backend Software Engineer | 9/10 |",
+        "| 2 | Cohere | Software Engineer, Internal Infrastructure | 9/10 |",
+      ].join("\n"),
+    );
+  });
+
   it("preserves visual code block line breaks from nested ChatGPT markup", () => {
     document.body.innerHTML = `
       <main>

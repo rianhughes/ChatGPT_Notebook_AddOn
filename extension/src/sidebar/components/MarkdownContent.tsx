@@ -31,6 +31,7 @@ type MarkdownPart =
 
 type MarkdownBlock =
   | { type: "code"; key: string; language: string | null; content: string; range: SourceRange }
+  | { type: "table"; key: string; header: string[]; rows: string[][]; range: SourceRange }
   | {
       type: "heading";
       key: string;
@@ -486,6 +487,31 @@ function renderMarkdownBlock(
     );
   }
 
+  if (block.type === "table") {
+    return (
+      <div className="markdown-table-scroll" key={block.key}>
+        <table className="markdown-table">
+          <thead>
+            <tr>
+              {block.header.map((cell, cellIndex) => (
+                <th key={cellIndex}>{renderInlineMarkdown(cell)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((cell, cellIndex) => (
+                  <td key={cellIndex}>{renderInlineMarkdown(cell)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
   if (block.type === "list") {
     if (isInlineEditing) {
       return <InlineTextBlockEditor block={block} className="markdown-list" inlineEdit={inlineEdit!} key={block.key} />;
@@ -857,13 +883,16 @@ function parseTextBlocks(content: string, keyPrefix: string, sourceStart: number
     }
   }
 
-  splitLinesWithOffsets(content, sourceStart).forEach((rawLine) => {
+  const lines = splitLinesWithOffsets(content, sourceStart);
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex];
     const line = rawLine.content.replace(/[ \t]+$/, "");
 
     if (!line.trim()) {
       flushParagraph();
       flushList();
-      return;
+      continue;
     }
 
     const boundaryLevel = getSectionBoundaryLevel(line);
@@ -877,7 +906,23 @@ function parseTextBlocks(content: string, keyPrefix: string, sourceStart: number
         level: boundaryLevel,
         range: { start: rawLine.start, end: rawLine.end },
       });
-      return;
+      continue;
+    }
+
+    const table = readMarkdownTable(lines, lineIndex);
+
+    if (table) {
+      flushParagraph();
+      flushList();
+      blocks.push({
+        type: "table",
+        key: nextKey("table"),
+        header: table.header,
+        rows: table.rows,
+        range: table.range,
+      });
+      lineIndex = table.nextLineIndex - 1;
+      continue;
     }
 
     const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*$/);
@@ -896,7 +941,7 @@ function parseTextBlocks(content: string, keyPrefix: string, sourceStart: number
         content: heading[2],
         range: { start: rawLine.start, end: rawLine.end },
       });
-      return;
+      continue;
     }
 
     const listItem = line.match(/^\s*[-*]\s+(.+)$/);
@@ -910,7 +955,7 @@ function parseTextBlocks(content: string, keyPrefix: string, sourceStart: number
 
       listRangeEnd = rawLine.end;
       listItems.push(listItem[1].trim());
-      return;
+      continue;
     }
 
     flushList();
@@ -919,12 +964,103 @@ function parseTextBlocks(content: string, keyPrefix: string, sourceStart: number
       start: rawLine.start,
       end: rawLine.end,
     });
-  });
+  }
 
   flushParagraph();
   flushList();
 
   return blocks;
+}
+
+type ParsedMarkdownTable = {
+  header: string[];
+  rows: string[][];
+  range: SourceRange;
+  nextLineIndex: number;
+};
+
+function readMarkdownTable(lines: MarkdownLine[], startIndex: number): ParsedMarkdownTable | null {
+  const headerLine = lines[startIndex];
+  const separatorLine = lines[startIndex + 1];
+
+  if (!headerLine || !separatorLine || !isMarkdownTableSeparator(separatorLine.content)) {
+    return null;
+  }
+
+  const header = splitMarkdownTableCells(headerLine.content);
+  const separator = splitMarkdownTableCells(separatorLine.content);
+
+  if (header.length < 2 || separator.length < header.length) {
+    return null;
+  }
+
+  const rows: string[][] = [];
+  let nextLineIndex = startIndex + 2;
+
+  while (nextLineIndex < lines.length && isMarkdownTableRow(lines[nextLineIndex].content)) {
+    rows.push(padMarkdownTableRow(splitMarkdownTableCells(lines[nextLineIndex].content), header.length));
+    nextLineIndex += 1;
+  }
+
+  return {
+    header: padMarkdownTableRow(header, header.length),
+    rows,
+    range: {
+      start: headerLine.start,
+      end: lines[nextLineIndex - 1]?.end ?? separatorLine.end,
+    },
+    nextLineIndex,
+  };
+}
+
+function isMarkdownTableRow(line: string): boolean {
+  return splitMarkdownTableCells(line).length > 1;
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const cells = splitMarkdownTableCells(line);
+  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitMarkdownTableCells(line: string): string[] {
+  const trimmed = line.trim();
+
+  if (!trimmed.includes("|")) {
+    return [];
+  }
+
+  const content = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let cell = "";
+  let isEscaped = false;
+
+  for (const character of content) {
+    if (isEscaped) {
+      cell += character;
+      isEscaped = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      isEscaped = true;
+      continue;
+    }
+
+    if (character === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+
+    cell += character;
+  }
+
+  cells.push(cell.trim());
+  return cells;
+}
+
+function padMarkdownTableRow(row: string[], columnCount: number): string[] {
+  return [...row, ...Array.from({ length: Math.max(0, columnCount - row.length) }, () => "")].slice(0, columnCount);
 }
 
 type MarkdownLine = {
@@ -962,7 +1098,17 @@ function getEditableBlockValue(block: MarkdownBlock): string {
     return "";
   }
 
+  if (block.type === "table") {
+    return `${renderMarkdownTableLine(block.header)}\n${renderMarkdownTableLine(
+      block.header.map(() => "---"),
+    )}\n${block.rows.map(renderMarkdownTableLine).join("\n")}`;
+  }
+
   return block.content;
+}
+
+function renderMarkdownTableLine(row: string[]): string {
+  return `| ${row.map((cell) => cell.replace(/\\/g, "\\\\").replace(/\|/g, "\\|")).join(" | ")} |`;
 }
 
 function replaceMarkdownBlock(markdown: string, block: MarkdownBlock, nextValue: string): string {
