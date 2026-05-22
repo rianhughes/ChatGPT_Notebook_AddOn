@@ -1,6 +1,7 @@
 import { Heading2, ListCollapse, Pencil, SendHorizontal, Trash2, Undo2, UnfoldVertical } from "lucide-react";
 
 import type { SavedMessage } from "../../core/models";
+import { BackToTopButton } from "./BackToTopButton";
 
 type MessageActionsProps = {
   message: SavedMessage;
@@ -49,6 +50,7 @@ export function MessageActions({
 
   return (
     <div className="message-actions">
+      <BackToTopButton />
       <button
         className="icon-button"
         type="button"

@@ -79,6 +79,44 @@ describe("MarkdownContent", () => {
     expect(html).toContain("Software Engineer, Internal Infrastructure");
   });
 
+  it("uses fenced code languages for labels and syntax highlighting", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownContent
+        markdown={[
+          "```go",
+          "func main() {",
+          "  println(\"hi\")",
+          "}",
+          "```",
+          "",
+          "```rust",
+          "fn main() {",
+          "  println!(\"hi\");",
+          "}",
+          "```",
+          "",
+          "```python",
+          "def answer():",
+          "    return True",
+          "```",
+          "",
+          "```bash",
+          "echo $HOME",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(html).toContain("<span>Go</span>");
+    expect(html).toContain("<span>Rust</span>");
+    expect(html).toContain("<span>Python</span>");
+    expect(html).toContain("<span>Bash</span>");
+    expect(html).toContain('<span class="syntax-token syntax-keyword">func</span>');
+    expect(html).toContain('<span class="syntax-token syntax-keyword">fn</span>');
+    expect(html).toContain('<span class="syntax-token syntax-keyword">def</span>');
+    expect(html).toContain('<span class="syntax-token syntax-variable">$HOME</span>');
+  });
+
   it("saves an inline paragraph edit with Enter and exits edit mode", async () => {
     const host = document.createElement("div");
     const root = createRoot(host);

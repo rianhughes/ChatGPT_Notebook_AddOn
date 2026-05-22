@@ -1454,6 +1454,9 @@ function normalizeLanguage(language: string | null, content: string): string {
 
 function getLanguageLabel(language: string): string {
   const labels: Record<string, string> = {
+    bash: "Bash",
+    go: "Go",
+    golang: "Go",
     js: "JavaScript",
     javascript: "JavaScript",
     json: "JSON",
@@ -1461,6 +1464,8 @@ function getLanguageLabel(language: string): string {
     md: "Markdown",
     py: "Python",
     python: "Python",
+    rs: "Rust",
+    rust: "Rust",
     sh: "Shell",
     shell: "Shell",
     ts: "TypeScript",
@@ -1488,7 +1493,7 @@ function renderHighlightedCode(content: string, language: string): ReactNode[] {
     return highlightJson(content);
   }
 
-  return highlightGenericCode(content);
+  return highlightLanguageCode(content, language);
 }
 
 function highlightJson(content: string): ReactNode[] {
@@ -1538,51 +1543,304 @@ function highlightJson(content: string): ReactNode[] {
   });
 }
 
-function highlightGenericCode(content: string): ReactNode[] {
-  const tokenPattern =
-    /(\/\/.*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:async|await|break|case|catch|class|const|continue|else|export|false|for|from|function|if|import|interface|let|new|null|return|switch|throw|true|try|type|undefined|var|while)\b|-?\b\d+(?:\.\d+)?\b|[A-Za-z_$][\w$]*(?=\s*\())/g;
+type CodeSyntax = {
+  tokenPattern: RegExp;
+  keywords: Set<string>;
+  literals: Set<string>;
+  isComment(token: string): boolean;
+  isString(token: string): boolean;
+  isVariable?(token: string): boolean;
+};
 
-  return tokenizeCode(content, tokenPattern, (match) => {
+const jsLikeSyntax = createCodeSyntax({
+  commentPattern: String.raw`\/\/.*|\/\*[\s\S]*?\*\/`,
+  stringPattern: String.raw`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|` + "`" + String.raw`(?:\\.|[^` + "`" + String.raw`\\])*` + "`",
+  keywords: [
+    "async",
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "else",
+    "export",
+    "extends",
+    "finally",
+    "for",
+    "from",
+    "function",
+    "if",
+    "import",
+    "interface",
+    "let",
+    "new",
+    "return",
+    "switch",
+    "throw",
+    "try",
+    "type",
+    "var",
+    "while",
+  ],
+  literals: ["false", "null", "true", "undefined"],
+});
+
+const goSyntax = createCodeSyntax({
+  commentPattern: String.raw`\/\/.*|\/\*[\s\S]*?\*\/`,
+  stringPattern: String.raw`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|` + "`" + String.raw`[\s\S]*?` + "`",
+  keywords: [
+    "break",
+    "case",
+    "chan",
+    "const",
+    "continue",
+    "default",
+    "defer",
+    "else",
+    "fallthrough",
+    "for",
+    "func",
+    "go",
+    "goto",
+    "if",
+    "import",
+    "interface",
+    "map",
+    "package",
+    "range",
+    "return",
+    "select",
+    "struct",
+    "switch",
+    "type",
+    "var",
+  ],
+  literals: ["false", "iota", "nil", "true"],
+});
+
+const pythonSyntax = createCodeSyntax({
+  commentPattern: String.raw`#.*`,
+  stringPattern:
+    String.raw`[rubfRUBF]*"""[\s\S]*?"""|[rubfRUBF]*'''[\s\S]*?'''|[rubfRUBF]*"(?:\\.|[^"\\])*"|[rubfRUBF]*'(?:\\.|[^'\\])*'`,
+  keywords: [
+    "and",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "break",
+    "class",
+    "continue",
+    "def",
+    "del",
+    "elif",
+    "else",
+    "except",
+    "finally",
+    "for",
+    "from",
+    "global",
+    "if",
+    "import",
+    "in",
+    "is",
+    "lambda",
+    "nonlocal",
+    "not",
+    "or",
+    "pass",
+    "raise",
+    "return",
+    "try",
+    "while",
+    "with",
+    "yield",
+  ],
+  literals: ["False", "None", "True"],
+});
+
+const rustSyntax = createCodeSyntax({
+  commentPattern: String.raw`\/\/.*|\/\*[\s\S]*?\*\/`,
+  stringPattern: String.raw`r#*"[\s\S]*?"#*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])'`,
+  keywords: [
+    "as",
+    "async",
+    "await",
+    "break",
+    "const",
+    "continue",
+    "crate",
+    "dyn",
+    "else",
+    "enum",
+    "extern",
+    "fn",
+    "for",
+    "if",
+    "impl",
+    "in",
+    "let",
+    "loop",
+    "match",
+    "mod",
+    "move",
+    "mut",
+    "pub",
+    "ref",
+    "return",
+    "self",
+    "Self",
+    "static",
+    "struct",
+    "super",
+    "trait",
+    "type",
+    "unsafe",
+    "use",
+    "where",
+    "while",
+  ],
+  literals: ["false", "None", "Some", "true"],
+  functionPattern: String.raw`[A-Za-z_][\w_]*(?=\s*[(!])`,
+});
+
+const shellSyntax = createCodeSyntax({
+  commentPattern: String.raw`#.*`,
+  stringPattern: String.raw`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'`,
+  keywords: [
+    "case",
+    "do",
+    "done",
+    "elif",
+    "else",
+    "esac",
+    "fi",
+    "for",
+    "function",
+    "if",
+    "in",
+    "then",
+    "until",
+    "while",
+  ],
+  literals: ["false", "true"],
+  variablePattern: String.raw`\$\{?[A-Za-z_][\w]*\}?|\$[0-9@#?*!-]`,
+});
+
+function highlightLanguageCode(content: string, language: string): ReactNode[] {
+  const syntax = getCodeSyntax(language);
+
+  return tokenizeCode(content, syntax.tokenPattern, (match) => {
     const token = match[0];
 
-    if (token.startsWith("//") || token.startsWith("/*")) {
-      return (
-        <span className="syntax-token syntax-comment" key="comment">
-          {token}
-        </span>
-      );
+    if (syntax.isComment(token)) {
+      return renderSyntaxToken("comment", token);
     }
 
-    if (token.startsWith('"') || token.startsWith("'") || token.startsWith("`")) {
-      return (
-        <span className="syntax-token syntax-string" key="string">
-          {token}
-        </span>
-      );
+    if (syntax.isString(token)) {
+      return renderSyntaxToken("string", token);
     }
 
-    if (/^-?\d/.test(token)) {
-      return (
-        <span className="syntax-token syntax-number" key="number">
-          {token}
-        </span>
-      );
+    if (syntax.isVariable?.(token)) {
+      return renderSyntaxToken("variable", token);
     }
 
-    if (/^[A-Za-z_$]/.test(token) && !isCodeKeyword(token)) {
-      return (
-        <span className="syntax-token syntax-function" key="function">
-          {token}
-        </span>
-      );
+    if (/^-?\b\d/.test(token)) {
+      return renderSyntaxToken("number", token);
     }
 
-    return (
-      <span className="syntax-token syntax-keyword" key="keyword">
-        {token}
-      </span>
-    );
+    if (syntax.literals.has(token)) {
+      return renderSyntaxToken("literal", token);
+    }
+
+    if (syntax.keywords.has(token)) {
+      return renderSyntaxToken("keyword", token);
+    }
+
+    if (isIdentifierToken(token)) {
+      return renderSyntaxToken("function", token);
+    }
+
+    return token;
   });
+}
+
+function getCodeSyntax(language: string): CodeSyntax {
+  if (language === "go" || language === "golang") {
+    return goSyntax;
+  }
+
+  if (language === "py" || language === "python") {
+    return pythonSyntax;
+  }
+
+  if (language === "rs" || language === "rust") {
+    return rustSyntax;
+  }
+
+  if (language === "bash" || language === "sh" || language === "shell") {
+    return shellSyntax;
+  }
+
+  return jsLikeSyntax;
+}
+
+function createCodeSyntax({
+  commentPattern,
+  stringPattern,
+  keywords,
+  literals,
+  variablePattern,
+  functionPattern = String.raw`[A-Za-z_$][\w$]*(?=\s*\()`,
+}: {
+  commentPattern: string;
+  stringPattern: string;
+  keywords: string[];
+  literals: string[];
+  variablePattern?: string;
+  functionPattern?: string;
+}): CodeSyntax {
+  const tokenPattern =
+    new RegExp(
+      [
+        commentPattern,
+        stringPattern,
+        variablePattern,
+        String.raw`\b(?:${keywords.map(escapeRegExp).join("|")})\b`,
+        String.raw`\b(?:${literals.map(escapeRegExp).join("|")})\b`,
+        String.raw`-?\b\d+(?:\.\d+)?\b`,
+        functionPattern,
+      ]
+        .filter(Boolean)
+        .join("|"),
+      "g",
+    );
+  const commentRegExp = new RegExp(`^(?:${commentPattern})$`);
+  const stringRegExp = new RegExp(`^(?:${stringPattern})$`);
+  const variableRegExp = variablePattern ? new RegExp(`^(?:${variablePattern})$`) : null;
+
+  return {
+    tokenPattern,
+    keywords: new Set(keywords),
+    literals: new Set(literals),
+    isComment: (token) => commentRegExp.test(token),
+    isString: (token) => stringRegExp.test(token),
+    isVariable: variableRegExp ? (token) => variableRegExp.test(token) : undefined,
+  };
+}
+
+function isIdentifierToken(token: string): boolean {
+  return /^[A-Za-z_$][\w$]*$/.test(token);
+}
+
+function renderSyntaxToken(type: string, token: string): ReactNode {
+  return (
+    <span className={`syntax-token syntax-${type}`} key={type}>
+      {token}
+    </span>
+  );
 }
 
 function tokenizeCode(
@@ -1619,12 +1877,6 @@ function tokenizeCode(
   }
 
   return parts;
-}
-
-function isCodeKeyword(token: string): boolean {
-  return /^(async|await|break|case|catch|class|const|continue|else|export|false|for|from|function|if|import|interface|let|new|null|return|switch|throw|true|try|type|undefined|var|while)$/.test(
-    token,
-  );
 }
 
 function escapeRegExp(value: string): string {
