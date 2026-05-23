@@ -9,8 +9,9 @@ import {
   recordNotebookDataMutation,
   saveStoredNotebookBackup,
 } from "../core/repository";
+import { writeBackupFilesToDownloads } from "./downloadBackup";
 
-const AUTOSAVE_DELAY_MS = 10_000;
+const AUTOSAVE_DELAY_MS = 1_500;
 const BACKUP_RETENTION_DAYS = 7;
 const LATEST_BACKUP_ID = "autosave:latest";
 
@@ -80,13 +81,15 @@ async function flushAutosave(): Promise<void> {
     const backupData = await createNotebookBackupData(snapshot, { dataRevision: metadata.dataRevision });
     const contents = `${JSON.stringify(backupData, null, 2)}\n`;
     const backupDate = backupData.exportedAt.slice(0, 10);
+    const latestFilename = "chatgpt-notes-autobackup-latest.json";
+    const dailyFilename = `chatgpt-notes-autobackup-${backupDate}.json`;
 
     await saveStoredNotebookBackup({
       id: LATEST_BACKUP_ID,
       kind: "latest",
       backupDate: null,
       contents,
-      filename: "chatgpt-notes-autobackup-latest.json",
+      filename: latestFilename,
       dataRevision: backupData.dataRevision,
       exportedAt: backupData.exportedAt,
     });
@@ -95,10 +98,14 @@ async function flushAutosave(): Promise<void> {
       kind: "daily",
       backupDate,
       contents,
-      filename: `chatgpt-notes-autobackup-${backupDate}.json`,
+      filename: dailyFilename,
       dataRevision: backupData.dataRevision,
       exportedAt: backupData.exportedAt,
     });
+    await writeBackupFilesToDownloads([
+      { filename: latestFilename, contents },
+      { filename: dailyFilename, contents },
+    ]);
     await cleanupOldDailyBackups(backupDate);
     await markNotebookBackupSucceeded({
       revision: metadata.dataRevision,

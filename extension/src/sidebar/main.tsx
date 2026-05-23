@@ -4,11 +4,11 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
-  Circle,
   Clock,
   ListCollapse,
   Moon,
   Plus,
+  RefreshCw,
   Sun,
   Sunset,
   TriangleAlert,
@@ -425,7 +425,6 @@ function App() {
     void notifyNotebookDataChanged("notebook-created");
     setNewNotebookTitle("");
     await loadThreads();
-    setStatus("Notebook created");
   }
 
   async function addFolder(event: React.FormEvent<HTMLFormElement>) {
@@ -439,11 +438,10 @@ function App() {
     setError("");
 
     try {
-      const folder = await createFolder({ title });
+      await createFolder({ title });
       void notifyNotebookDataChanged("folder-created");
       setNewFolderTitle("");
       await loadFolders();
-      setStatus(`Folder created: ${folder.title}`);
     } catch {
       setError("Could not create folder.");
     }
@@ -479,8 +477,6 @@ function App() {
       } else if (isNotebookDetailVisible) {
         await loadMessages(selectedThreadId);
       }
-
-      setStatus("Deleted notebook");
     } catch {
       setError("Could not delete notebook.");
     }
@@ -491,13 +487,9 @@ function App() {
     setStatus("");
 
     try {
-      const updatedThread = await moveThreadToFolder(thread.id, folderId);
+      await moveThreadToFolder(thread.id, folderId);
       void notifyNotebookDataChanged("notebook-moved-to-folder");
       await loadThreads();
-      const folder = folderId ? folders.find((item) => item.id === folderId) : null;
-      setStatus(
-        folder ? `Moved ${updatedThread.title} to ${folder.title}` : `Moved ${updatedThread.title} to no folder`,
-      );
     } catch {
       setError("Could not move notebook.");
     }
@@ -511,7 +503,6 @@ function App() {
       await moveThreadAfterThread(thread.id, afterThreadId);
       void notifyNotebookDataChanged("notebook-reordered");
       await loadThreads();
-      setStatus("Moved notebook");
     } catch {
       setError("Could not reorder notebooks.");
     }
@@ -522,10 +513,9 @@ function App() {
     setStatus("");
 
     try {
-      const updated = await renameFolder(folderId, title);
+      await renameFolder(folderId, title);
       void notifyNotebookDataChanged("folder-renamed");
       await loadFolders();
-      setStatus(`Renamed folder to ${updated.title}`);
     } catch {
       setError("Could not rename folder.");
     }
@@ -545,7 +535,6 @@ function App() {
       await deleteFolder(folder.id);
       void notifyNotebookDataChanged("folder-deleted");
       await Promise.all([loadFolders(), loadThreads()]);
-      setStatus("Deleted folder");
     } catch {
       setError("Could not delete folder.");
     }
@@ -569,7 +558,6 @@ function App() {
       const file = createNotebookExportFile(exportData, formatId);
 
       downloadNotebookExport(file);
-      setStatus(`Exported ${selectedThread.title} as ${file.format.label}`);
     } catch {
       setError("Could not export notebook.");
     }
@@ -584,7 +572,6 @@ function App() {
       const file = createNotebookBackupFile(backupData);
 
       downloadNotebookExport(file);
-      setStatus(`Exported backup with ${backupData.counts.threads} notebooks`);
     } catch {
       setError("Could not export backup.");
     }
@@ -604,7 +591,7 @@ function App() {
 
     try {
       const backupData = await parseNotebookImportFile(file);
-      const result = await mergeNotebookDataFromBackup(backupData);
+      await mergeNotebookDataFromBackup(backupData);
       void notifyNotebookDataChanged("backup-imported");
       resetCollapsedMessages();
       setMessageUndoHistory({});
@@ -616,7 +603,6 @@ function App() {
       setIsNotebookOpen(false);
       await loadMessages(null);
       await Promise.all([loadThreads(), loadFolders(), loadAiOperationProposals()]);
-      setStatus(`Merged backup with ${result.threads} notebooks`);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not import backup.");
     }
@@ -646,7 +632,6 @@ function App() {
       const exportData = await createNotebookExportDataWithAssets(selectedThread, orderedMessages, assets);
 
       printWindow.print(createNotebookPrintHtml(exportData));
-      setStatus(`Opened PDF export for ${selectedThread.title}`);
     } catch {
       printWindow.close();
       setError("Could not export notebook.");
@@ -659,11 +644,10 @@ function App() {
     const undoSnapshot = isNotebookDetailVisible && threadId === selectedThreadId ? createNotebookUndoSnapshot(threadId) : null;
 
     try {
-      const updated = await renameThreadTitle(threadId, title);
+      await renameThreadTitle(threadId, title);
       void notifyNotebookDataChanged("notebook-renamed");
       pushNotebookUndoSnapshot(undoSnapshot);
       await loadThreads();
-      setStatus(`Renamed to ${updated.title}`);
     } catch {
       setError("Could not rename notebook.");
     }
@@ -744,7 +728,6 @@ function App() {
       setIsMergingMessages(false);
       setSelectedMergeMessageIds(new Set());
       resetCollapsedMessages();
-      setStatus("Undid notebook change");
       await loadMessages(selectedThreadId);
       await loadThreads();
     } catch {
@@ -793,7 +776,6 @@ function App() {
         ...knownDefaultCollapsedMessageIdsRef.current,
         createdMessage.id,
       ]);
-      setStatus("Created note");
       await loadMessages(selectedThread.id);
       await loadThreads();
     } catch {
@@ -812,10 +794,7 @@ function App() {
 
     const orderedMessages = await getMessagesInOrder(selectedThread.id);
 
-    await runChatGptInsertAction(
-      createEditableNotebookContext(selectedThread, orderedMessages, folders),
-      "Inserted editable notebook context into ChatGPT",
-    );
+    await runChatGptInsertAction(createEditableNotebookContext(selectedThread, orderedMessages, folders));
   }
 
   async function applyAiProposal(proposal: AiOperationProposal) {
@@ -843,8 +822,6 @@ function App() {
         await loadMessages(selectedThreadId);
       }
 
-      setStatus(`Applied ${result.appliedCount} ChatGPT ${result.appliedCount === 1 ? "change" : "changes"}`);
-
       if (result.errors.length > 0) {
         setError(result.errors[0]);
       }
@@ -861,7 +838,6 @@ function App() {
       await deleteAiOperationProposal(proposal.id);
       void notifyNotebookDataChanged("ai-proposal-dismissed");
       await loadAiOperationProposals();
-      setStatus("Dismissed ChatGPT note changes");
     } catch {
       setError("Could not dismiss ChatGPT note changes.");
     }
@@ -910,7 +886,6 @@ function App() {
       return;
     }
 
-    const mergedCount = selectedMergeMessages.length;
     const undoSnapshot = createNotebookUndoSnapshot(selectedThreadId);
 
     try {
@@ -928,7 +903,6 @@ function App() {
       setIsMergingMessages(false);
       setSelectedMergeMessageIds(new Set());
       pushNotebookUndoSnapshot(undoSnapshot);
-      setStatus(`Merged ${mergedCount} notes`);
       await loadMessages(selectedThreadId);
       await loadThreads();
     } catch {
@@ -945,7 +919,6 @@ function App() {
       setMessages(await moveMessageAfterMessage(message.threadId, message.id, afterMessageId));
       void notifyNotebookDataChanged("note-reordered");
       pushNotebookUndoSnapshot(undoSnapshot);
-      setStatus("Moved note");
       await loadThreads();
     } catch {
       setError("Could not reorder notes.");
@@ -956,10 +929,7 @@ function App() {
     const highlightedText = getHighlightedInsertText(window.getSelection(), getMessageElement(message.id));
     const text = highlightedText ?? getMessageCopyText(message);
 
-    await runChatGptInsertAction(
-      text,
-      highlightedText ? "Inserted highlighted text into ChatGPT" : "Inserted note into ChatGPT",
-    );
+    await runChatGptInsertAction(text);
   }
 
   async function insertMessageSectionIntoChatGpt(message: SavedMessage, headingIndex: number) {
@@ -973,7 +943,7 @@ function App() {
       return;
     }
 
-    await runChatGptInsertAction(sectionMarkdown, "Inserted section into ChatGPT");
+    await runChatGptInsertAction(sectionMarkdown);
   }
 
   async function makeSelectedTextHeading(message: SavedMessage) {
@@ -1010,7 +980,6 @@ function App() {
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
       selection.removeAllRanges();
-      setStatus("Made highlighted text a collapsible header");
       await loadMessages(message.threadId);
       await loadThreads();
     } catch {
@@ -1047,7 +1016,6 @@ function App() {
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
       window.getSelection()?.removeAllRanges();
-      setStatus("Moved highlighted text into section");
       await loadMessages(message.threadId);
       await loadThreads();
     } catch {
@@ -1074,7 +1042,6 @@ function App() {
       void notifyNotebookDataChanged("note-updated");
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
-      setStatus("Removed collapsible header");
       await loadMessages(message.threadId);
       await loadThreads();
     } catch {
@@ -1107,7 +1074,6 @@ function App() {
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
       window.getSelection()?.removeAllRanges();
-      setStatus("Updated highlighted text");
       await loadMessages(message.threadId);
       await loadThreads();
     } catch {
@@ -1134,7 +1100,6 @@ function App() {
       if (previousMarkdown !== nextMarkdown || previousTitle !== nextTitle) {
         pushNotebookUndoSnapshot(undoSnapshot);
       }
-      setStatus("Updated note");
       await loadMessages(message.threadId);
       await loadThreads();
     } catch {
@@ -1155,7 +1120,6 @@ function App() {
       });
       void notifyNotebookDataChanged("image-added");
 
-      setStatus("Image added to note draft");
       return createAssetMarkdown(asset.id, asset.altText);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not add image.");
@@ -1193,7 +1157,6 @@ function App() {
     pushMessageUndoSnapshot(message.id, getStoredMessageMarkdown(message));
     pushNotebookUndoSnapshot(undoSnapshot);
     selection.removeAllRanges();
-    setStatus("Deleted highlighted text");
     await loadMessages(message.threadId);
     await loadThreads();
   }
@@ -1227,7 +1190,6 @@ function App() {
         next.delete(message.id);
         return next;
       });
-      setStatus("Deleted note");
       await loadMessages(selectedThreadId);
       await loadThreads();
     } catch {
@@ -1254,7 +1216,6 @@ function App() {
       void notifyNotebookDataChanged("note-section-deleted");
       pushMessageUndoSnapshot(message.id, previousMarkdown);
       pushNotebookUndoSnapshot(undoSnapshot);
-      setStatus("Deleted section");
       await loadMessages(message.threadId);
       await loadThreads();
     } catch {
@@ -1280,7 +1241,6 @@ function App() {
       void notifyNotebookDataChanged("note-undo");
       popMessageUndoSnapshot(message.id);
       pushNotebookUndoSnapshot(undoSnapshot);
-      setStatus("Undid last note edit");
       await loadMessages(message.threadId);
       await loadThreads();
     } catch {
@@ -1305,7 +1265,6 @@ function App() {
       setLastDeletedMessage(null);
       pushNotebookUndoSnapshot(undoSnapshot);
       setCollapsedMessageIds((current) => new Set(current).add(restoredMessage.id));
-      setStatus("Restored note");
       await loadMessages(restoredMessage.threadId);
       await loadThreads();
     } catch {
@@ -1358,7 +1317,7 @@ function App() {
     });
   }
 
-  async function runChatGptInsertAction(text: string, successMessage: string) {
+  async function runChatGptInsertAction(text: string) {
     setError("");
     setStatus("");
 
@@ -1378,7 +1337,6 @@ function App() {
         return;
       }
 
-      setStatus(successMessage);
     } catch {
       setError("Could not insert into ChatGPT.");
     }
@@ -1398,8 +1356,6 @@ function App() {
         setError(response.error ?? "Could not open notes window.");
         return;
       }
-
-      setStatus("Opened notes window");
     } catch {
       setError("Could not open notes window.");
     }
@@ -1635,7 +1591,7 @@ function getAutosaveTooltipText(status: AutosaveStatusResponse): string {
 
 function getAutosaveIcon(status: AutosaveStatusResponse) {
   if (status.state === "pending") {
-    return <Circle size={14} aria-hidden="true" />;
+    return <RefreshCw size={14} aria-hidden="true" />;
   }
 
   if (status.state === "saving") {

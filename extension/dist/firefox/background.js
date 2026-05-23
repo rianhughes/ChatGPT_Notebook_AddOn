@@ -4773,7 +4773,40 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     const revision = Number(((_a2 = snapshot.settings.find((setting) => setting.key === "dataRevision")) == null ? void 0 : _a2.value) ?? 0);
     return Number.isFinite(revision) ? revision : 0;
   }
-  const AUTOSAVE_DELAY_MS = 1e4;
+  const BACKUP_DOWNLOAD_DIRECTORY = "ChatGPT Notebook Backups";
+  async function writeBackupFilesToDownloads(files) {
+    const downloadsApi = browser.downloads;
+    if (!(downloadsApi == null ? void 0 : downloadsApi.download)) {
+      throw new Error("Automatic backup downloads are unavailable.");
+    }
+    for (const file of files) {
+      const downloadUrl = createJsonDownloadUrl(file.contents);
+      await downloadsApi.download({
+        url: downloadUrl.url,
+        filename: `${BACKUP_DOWNLOAD_DIRECTORY}/${file.filename}`,
+        saveAs: false,
+        conflictAction: "overwrite"
+      });
+      downloadUrl.revoke();
+    }
+  }
+  function createJsonDownloadUrl(contents) {
+    if (typeof URL.createObjectURL === "function") {
+      const blob = new Blob([contents], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      return {
+        url,
+        revoke: () => {
+          globalThis.setTimeout(() => URL.revokeObjectURL(url), 6e4);
+        }
+      };
+    }
+    return {
+      url: `data:application/json;charset=utf-8,${encodeURIComponent(contents)}`,
+      revoke: () => void 0
+    };
+  }
+  const AUTOSAVE_DELAY_MS = 1500;
   const BACKUP_RETENTION_DAYS = 7;
   const LATEST_BACKUP_ID = "autosave:latest";
   let autosaveTimer = null;
@@ -4831,12 +4864,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       const contents = `${JSON.stringify(backupData, null, 2)}
 `;
       const backupDate = backupData.exportedAt.slice(0, 10);
+      const latestFilename = "chatgpt-notes-autobackup-latest.json";
+      const dailyFilename = `chatgpt-notes-autobackup-${backupDate}.json`;
       await saveStoredNotebookBackup({
         id: LATEST_BACKUP_ID,
         kind: "latest",
         backupDate: null,
         contents,
-        filename: "chatgpt-notes-autobackup-latest.json",
+        filename: latestFilename,
         dataRevision: backupData.dataRevision,
         exportedAt: backupData.exportedAt
       });
@@ -4845,10 +4880,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         kind: "daily",
         backupDate,
         contents,
-        filename: `chatgpt-notes-autobackup-${backupDate}.json`,
+        filename: dailyFilename,
         dataRevision: backupData.dataRevision,
         exportedAt: backupData.exportedAt
       });
+      await writeBackupFilesToDownloads([
+        { filename: latestFilename, contents },
+        { filename: dailyFilename, contents }
+      ]);
       await cleanupOldDailyBackups(backupDate);
       await markNotebookBackupSucceeded({
         revision: metadata.dataRevision,

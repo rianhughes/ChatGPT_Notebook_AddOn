@@ -771,8 +771,9 @@ button {
 }
 
 .autosave-status.is-pending {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
+  border-color: var(--color-border);
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
 }
 
 .autosave-status.is-saving {
