@@ -688,11 +688,19 @@ export async function deleteThread(threadId: string): Promise<void> {
     const activeSaveTarget = await notesDb.settings.get("activeSaveTargetThreadId");
 
     if (activeSaveTarget?.value === threadId) {
-      await notesDb.settings.put({
-        key: "activeSaveTargetThreadId",
-        value: null,
-        updatedAt: Date.now(),
-      });
+      const timestamp = Date.now();
+      await notesDb.settings.bulkPut([
+        {
+          key: "activeSaveTargetThreadId",
+          value: null,
+          updatedAt: timestamp,
+        },
+        {
+          key: "activeSaveTargetMessageId",
+          value: null,
+          updatedAt: timestamp,
+        },
+      ]);
     }
   });
 }
@@ -764,11 +772,18 @@ export async function setActiveSaveTargetThread(threadId: string | null): Promis
     const timestamp = Date.now();
 
     if (!threadId) {
-      await notesDb.settings.put({
-        key: "activeSaveTargetThreadId",
-        value: null,
-        updatedAt: timestamp,
-      });
+      await notesDb.settings.bulkPut([
+        {
+          key: "activeSaveTargetThreadId",
+          value: null,
+          updatedAt: timestamp,
+        },
+        {
+          key: "activeSaveTargetMessageId",
+          value: null,
+          updatedAt: timestamp,
+        },
+      ]);
       return null;
     }
 
@@ -778,13 +793,79 @@ export async function setActiveSaveTargetThread(threadId: string | null): Promis
       throw new Error(`Missing save target thread ${threadId}`);
     }
 
-    await notesDb.settings.put({
-      key: "activeSaveTargetThreadId",
-      value: threadId,
-      updatedAt: timestamp,
-    });
+    await notesDb.settings.bulkPut([
+      {
+        key: "activeSaveTargetThreadId",
+        value: threadId,
+        updatedAt: timestamp,
+      },
+      {
+        key: "activeSaveTargetMessageId",
+        value: null,
+        updatedAt: timestamp,
+      },
+    ]);
 
     return thread;
+  });
+}
+
+export async function getActiveSaveTargetMessage(): Promise<SavedMessage | null> {
+  const setting = await notesDb.settings.get("activeSaveTargetMessageId");
+
+  if (!setting?.value) {
+    return null;
+  }
+
+  const message = await notesDb.messages.get(setting.value);
+
+  if (!message) {
+    await notesDb.settings.delete("activeSaveTargetMessageId");
+    return null;
+  }
+
+  return message;
+}
+
+export async function setActiveSaveTargetMessage(messageId: string | null): Promise<SavedMessage | null> {
+  return notesDb.transaction("rw", notesDb.threads, notesDb.messages, notesDb.settings, async () => {
+    const timestamp = Date.now();
+
+    if (!messageId) {
+      await notesDb.settings.put({
+        key: "activeSaveTargetMessageId",
+        value: null,
+        updatedAt: timestamp,
+      });
+      return null;
+    }
+
+    const message = await notesDb.messages.get(messageId);
+
+    if (!message) {
+      throw new Error(`Missing save target message ${messageId}`);
+    }
+
+    const thread = await notesDb.threads.get(message.threadId);
+
+    if (!thread) {
+      throw new Error(`Missing save target thread ${message.threadId}`);
+    }
+
+    await notesDb.settings.bulkPut([
+      {
+        key: "activeSaveTargetThreadId",
+        value: message.threadId,
+        updatedAt: timestamp,
+      },
+      {
+        key: "activeSaveTargetMessageId",
+        value: message.id,
+        updatedAt: timestamp,
+      },
+    ]);
+
+    return message;
   });
 }
 
@@ -951,6 +1032,21 @@ export async function appendSavedMessageFromChatGpt(
       return { thread, message: existing, status: "already_saved" };
     }
 
+    const activeSaveTargetMessage = await getActiveSaveTargetMessageInTransaction(thread.id);
+
+    if (activeSaveTargetMessage) {
+      const updatedMessage = appendExportToMessage(activeSaveTargetMessage, input, timestamp);
+      const updatedThread = {
+        ...thread,
+        updatedAt: timestamp,
+      };
+
+      await notesDb.messages.put(updatedMessage);
+      await notesDb.threads.put(updatedThread);
+
+      return { thread: updatedThread, message: updatedMessage, status: "updated" };
+    }
+
     const message = createSavedMessage(
       thread.id,
       {
@@ -978,7 +1074,7 @@ export async function appendSavedMessageFromChatGpt(
 }
 
 export async function deleteMessage(threadId: string, messageId: string): Promise<void> {
-  await notesDb.transaction("rw", notesDb.threads, notesDb.messages, async () => {
+  await notesDb.transaction("rw", notesDb.threads, notesDb.messages, notesDb.settings, async () => {
     const thread = await requireThread(threadId);
     const node = await notesDb.messages.get(messageId);
 
@@ -1001,6 +1097,16 @@ export async function deleteMessage(threadId: string, messageId: string): Promis
 
     await notesDb.messages.delete(messageId);
     await notesDb.threads.put(updatedThread);
+
+    const activeSaveTargetMessage = await notesDb.settings.get("activeSaveTargetMessageId");
+
+    if (activeSaveTargetMessage?.value === messageId) {
+      await notesDb.settings.put({
+        key: "activeSaveTargetMessageId",
+        value: null,
+        updatedAt: timestamp,
+      });
+    }
   });
 }
 
@@ -1292,6 +1398,47 @@ async function getSaveTargetThreadInTransaction(input: ChatGptThreadInput): Prom
   }
 
   return getOrCreateThreadInTransaction(input);
+}
+
+async function getActiveSaveTargetMessageInTransaction(threadId: string): Promise<SavedMessage | null> {
+  const setting = await notesDb.settings.get("activeSaveTargetMessageId");
+
+  if (!setting?.value) {
+    return null;
+  }
+
+  const message = await notesDb.messages.get(setting.value);
+
+  if (!message) {
+    await notesDb.settings.delete("activeSaveTargetMessageId");
+    return null;
+  }
+
+  if (message.threadId !== threadId) {
+    await notesDb.settings.delete("activeSaveTargetMessageId");
+    return null;
+  }
+
+  return message;
+}
+
+function appendExportToMessage(
+  message: SavedMessage,
+  input: SaveChatGptMessageInput,
+  timestamp: number,
+): SavedMessage {
+  const currentMarkdown = (message.contentMarkdown || message.contentText).replace(/\r\n/g, "\n").trim();
+  const exportedMarkdown = input.contentMarkdown.replace(/\r\n/g, "\n").trim();
+  const contentMarkdown = [currentMarkdown, exportedMarkdown].filter(Boolean).join("\n\n");
+  const contentText = markdownToPlainText(contentMarkdown);
+
+  return {
+    ...message,
+    contentMarkdown,
+    contentText,
+    contentHash: contentHashFromParts({ contentMarkdown, contentText }),
+    updatedAt: timestamp,
+  };
 }
 
 async function getOrCreateThreadInTransaction(input: ChatGptThreadInput): Promise<ChatGptThread> {

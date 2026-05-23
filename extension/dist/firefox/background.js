@@ -4259,6 +4259,21 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     }
   }
   const notesDb = new NotesDatabase();
+  function normalizeForKey(input) {
+    return input.replace(/\s+/g, " ").trim().toLowerCase();
+  }
+  function stableHash(input) {
+    let hash = 2166136261;
+    for (let index = 0; index < input.length; index += 1) {
+      hash ^= input.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, "0");
+  }
+  function contentHashFromParts(input) {
+    return stableHash(`${input.contentMarkdown}
+${normalizeForKey(input.contentText)}`);
+  }
   function createId(prefix) {
     var _a2, _b;
     const randomId = (_b = (_a2 = globalThis.crypto) == null ? void 0 : _a2.randomUUID) == null ? void 0 : _b.call(_a2);
@@ -4450,22 +4465,36 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     return notesDb.transaction("rw", notesDb.threads, notesDb.settings, async () => {
       const timestamp = Date.now();
       if (!threadId) {
-        await notesDb.settings.put({
-          key: "activeSaveTargetThreadId",
-          value: null,
-          updatedAt: timestamp
-        });
+        await notesDb.settings.bulkPut([
+          {
+            key: "activeSaveTargetThreadId",
+            value: null,
+            updatedAt: timestamp
+          },
+          {
+            key: "activeSaveTargetMessageId",
+            value: null,
+            updatedAt: timestamp
+          }
+        ]);
         return null;
       }
       const thread = await notesDb.threads.get(threadId);
       if (!thread) {
         throw new Error(`Missing save target thread ${threadId}`);
       }
-      await notesDb.settings.put({
-        key: "activeSaveTargetThreadId",
-        value: threadId,
-        updatedAt: timestamp
-      });
+      await notesDb.settings.bulkPut([
+        {
+          key: "activeSaveTargetThreadId",
+          value: threadId,
+          updatedAt: timestamp
+        },
+        {
+          key: "activeSaveTargetMessageId",
+          value: null,
+          updatedAt: timestamp
+        }
+      ]);
       return thread;
     });
   }
@@ -4498,6 +4527,17 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           return { thread: updatedThread2, message: updatedMessage, status: "updated" };
         }
         return { thread, message: existing, status: "already_saved" };
+      }
+      const activeSaveTargetMessage = await getActiveSaveTargetMessageInTransaction(thread.id);
+      if (activeSaveTargetMessage) {
+        const updatedMessage = appendExportToMessage(activeSaveTargetMessage, input, timestamp);
+        const updatedThread2 = {
+          ...thread,
+          updatedAt: timestamp
+        };
+        await notesDb.messages.put(updatedMessage);
+        await notesDb.threads.put(updatedThread2);
+        return { thread: updatedThread2, message: updatedMessage, status: "updated" };
       }
       const message = createSavedMessage(
         thread.id,
@@ -4548,6 +4588,35 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
       await notesDb.settings.delete("activeSaveTargetThreadId");
     }
     return getOrCreateThreadInTransaction(input);
+  }
+  async function getActiveSaveTargetMessageInTransaction(threadId) {
+    const setting = await notesDb.settings.get("activeSaveTargetMessageId");
+    if (!(setting == null ? void 0 : setting.value)) {
+      return null;
+    }
+    const message = await notesDb.messages.get(setting.value);
+    if (!message) {
+      await notesDb.settings.delete("activeSaveTargetMessageId");
+      return null;
+    }
+    if (message.threadId !== threadId) {
+      await notesDb.settings.delete("activeSaveTargetMessageId");
+      return null;
+    }
+    return message;
+  }
+  function appendExportToMessage(message, input, timestamp) {
+    const currentMarkdown = (message.contentMarkdown || message.contentText).replace(/\r\n/g, "\n").trim();
+    const exportedMarkdown = input.contentMarkdown.replace(/\r\n/g, "\n").trim();
+    const contentMarkdown = [currentMarkdown, exportedMarkdown].filter(Boolean).join("\n\n");
+    const contentText = markdownToPlainText(contentMarkdown);
+    return {
+      ...message,
+      contentMarkdown,
+      contentText,
+      contentHash: contentHashFromParts({ contentMarkdown, contentText }),
+      updatedAt: timestamp
+    };
   }
   async function getOrCreateThreadInTransaction(input) {
     const source = input.source ?? "chatgpt";
@@ -5001,7 +5070,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
         await noteNotebookDataChanged();
         const response = {
           sourceThreadId: message.payload.sourceThreadId,
-          sourceMessageKey: result.message.sourceMessageKey,
+          sourceMessageKey: message.payload.sourceMessageKey,
           savedMessageId: result.message.id,
           status: result.status
         };
@@ -5009,7 +5078,7 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
           type: "SOURCE_MESSAGE_SAVED_STATE_CHANGED",
           payload: {
             sourceThreadId: message.payload.sourceThreadId,
-            sourceMessageKey: result.message.sourceMessageKey,
+            sourceMessageKey: message.payload.sourceMessageKey,
             saved: true
           }
         });

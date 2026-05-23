@@ -1,4 +1,4 @@
-import { GripVertical, ImagePlus, Sparkles, Undo2 } from "lucide-react";
+import { ImagePlus, Sparkles, Square, SquareCheckBig, Undo2 } from "lucide-react";
 import type { ClipboardEvent, DragEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
@@ -19,6 +19,7 @@ type MessageListProps = {
   undoableMessageIds: Set<string>;
   canUndoDeletedMessage: boolean;
   selectedMessageIds: Set<string>;
+  exportTargetMessageId?: string | null;
   autoEditMessageId?: string | null;
   isSelectingForMerge: boolean;
   collapsedMessageIds: Set<string>;
@@ -26,6 +27,7 @@ type MessageListProps = {
   onAutoEditMessageHandled?(): void;
   onCollapsedMessageIdsChange(updater: (current: Set<string>) => Set<string>): void;
   onToggleMessageSelection(messageId: string): void;
+  onToggleExportTargetMessage?(message: SavedMessage): void;
   onMoveMessageAfter(message: SavedMessage, afterMessageId: string | null): void;
   onMakeSelectionHeading(message: SavedMessage): void;
   onInsertMessage(message: SavedMessage): void;
@@ -53,6 +55,7 @@ export function MessageList({
   undoableMessageIds,
   canUndoDeletedMessage,
   selectedMessageIds,
+  exportTargetMessageId = null,
   autoEditMessageId = null,
   isSelectingForMerge,
   collapsedMessageIds,
@@ -60,6 +63,7 @@ export function MessageList({
   onAutoEditMessageHandled,
   onCollapsedMessageIdsChange,
   onToggleMessageSelection,
+  onToggleExportTargetMessage = () => undefined,
   onMoveMessageAfter,
   onMakeSelectionHeading,
   onInsertMessage,
@@ -446,7 +450,7 @@ export function MessageList({
 
     const dragStartTarget = event.target instanceof HTMLElement ? event.target : null;
 
-    if (!dragStartTarget?.closest(".message-drag-handle")) {
+    if (!dragStartTarget?.closest(".message-collapse-strip")) {
       event.preventDefault();
       return;
     }
@@ -535,6 +539,8 @@ export function MessageList({
           activeHeadingSection?.messageId === message.id ? activeHeadingSection.headingIndex : null;
         const noteMarkdown = isEditing ? draftMarkdown : message.contentMarkdown || message.contentText;
         const noteHeader = getNoteHeaderParts(noteMarkdown, isEditing ? draftTitle : message.title);
+        const isExportTarget = exportTargetMessageId === message.id;
+        const exportTargetTitle = isExportTarget ? "Deselect note" : "Select note";
 
         return (
           <li
@@ -559,25 +565,32 @@ export function MessageList({
                   checked={selectedMessageIds.has(message.id)}
                   onChange={() => onToggleMessageSelection(message.id)}
                 />
-              ) : canReorderMessages ? (
-                <span
-                  className="message-drag-handle"
-                  draggable={!isEditing}
-                  title="Drag note to reorder"
-                  aria-hidden="true"
-                  onDragEnd={handleMessageDragEnd}
-                  onDragStart={(event) => handleMessageDragStart(message, event)}
+              ) : (
+                <button
+                  className={`icon-button message-select-note-button${isExportTarget ? " is-active" : ""}`}
+                  type="button"
+                  title={exportTargetTitle}
+                  aria-label={exportTargetTitle}
+                  aria-pressed={isExportTarget}
+                  onClick={() => onToggleExportTargetMessage(message)}
                 >
-                  <GripVertical size={16} aria-hidden="true" />
-                </span>
-              ) : null}
+                  {isExportTarget ? (
+                    <SquareCheckBig size={16} aria-hidden="true" />
+                  ) : (
+                    <Square size={16} aria-hidden="true" />
+                  )}
+                </button>
+              )}
             </div>
             <button
               className="message-collapse-strip"
               type="button"
+              draggable={canReorderMessages && !isEditing}
               title={isCollapsed ? "Expand note" : "Collapse note"}
               aria-label={`${isCollapsed ? "Expand note" : "Collapse note"}: ${noteHeader.header}`}
               onClick={() => toggleCollapse(message)}
+              onDragEnd={handleMessageDragEnd}
+              onDragStart={(event) => handleMessageDragStart(message, event)}
             >
               <span className="message-header-text">{noteHeader.header}</span>
             </button>

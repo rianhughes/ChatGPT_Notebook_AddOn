@@ -55,6 +55,7 @@ export type StoredNotebookBackup = {
 
 export type AppSettingKey =
   | "activeSaveTargetThreadId"
+  | "activeSaveTargetMessageId"
   | "dataRevision"
   | "lastBackupRevision"
   | "lastBackupAt"

@@ -61,6 +61,7 @@ import {
   deleteThread,
   getFolders,
   getAiOperationProposals,
+  getActiveSaveTargetMessage,
   getAssetsForThread,
   getNotebookBackupSnapshot,
   getMessagesInOrder,
@@ -76,6 +77,7 @@ import {
   renameThreadTitle,
   restoreDeletedMessage,
   restoreNotebookSnapshot,
+  setActiveSaveTargetMessage,
   updateMessageContent,
   type NotebookSnapshot,
 } from "../core/repository";
@@ -132,6 +134,7 @@ function App() {
   const [pendingEditMessageId, setPendingEditMessageId] = useState<string | null>(null);
   const [isMergingMessages, setIsMergingMessages] = useState(false);
   const [selectedMergeMessageIds, setSelectedMergeMessageIds] = useState<Set<string>>(() => new Set());
+  const [exportTargetMessageId, setExportTargetMessageId] = useState<string | null>(null);
   const [collapsedMessageIds, setCollapsedMessageIds] = useState<Set<string>>(() => new Set());
   const defaultCollapsedThreadIdRef = useRef<string | null>(null);
   const knownDefaultCollapsedMessageIdsRef = useRef<Set<string>>(new Set());
@@ -262,6 +265,9 @@ function App() {
     void (async () => {
       await Promise.all([loadThreads(), loadFolders(), loadAiOperationProposals(), loadAutosaveStatus()]);
 
+      const activeSaveTargetMessage = await getActiveSaveTargetMessage();
+      setExportTargetMessageId(activeSaveTargetMessage?.id ?? null);
+
       try {
         const activeSaveTarget = await sendRuntimeMessage<ActiveSaveTargetResponse>({
           type: "GET_ACTIVE_SAVE_TARGET",
@@ -312,6 +318,16 @@ function App() {
       return next.size === current.size ? current : next;
     });
   }, [messages]);
+
+  useEffect(() => {
+    if (!exportTargetMessageId || messages.length === 0) {
+      return;
+    }
+
+    if (!messages.some((message) => message.id === exportTargetMessageId)) {
+      setExportTargetMessageId(null);
+    }
+  }, [exportTargetMessageId, messages]);
 
   useEffect(() => {
     if (!isNotebookDetailVisible) {
@@ -385,6 +401,7 @@ function App() {
     setLastDeletedMessage(null);
     setIsMergingMessages(false);
     setSelectedMergeMessageIds(new Set());
+    setExportTargetMessageId(null);
     setIsNotebookToolsOpen(false);
     setStatus("");
     setError("");
@@ -875,6 +892,22 @@ function App() {
 
       return next;
     });
+  }
+
+  async function toggleExportTargetMessage(message: SavedMessage) {
+    setError("");
+    setStatus("");
+
+    const nextTargetId = exportTargetMessageId === message.id ? null : message.id;
+    setExportTargetMessageId(nextTargetId);
+
+    try {
+      await setActiveSaveTargetMessage(nextTargetId);
+      void notifyNotebookDataChanged(nextTargetId ? "save-target-note-selected" : "save-target-note-cleared");
+    } catch {
+      setExportTargetMessageId(exportTargetMessageId);
+      setError("Could not update export target note.");
+    }
   }
 
   async function mergeSelectedMessages() {
@@ -1473,6 +1506,7 @@ function App() {
               undoableMessageIds={undoableMessageIds}
               canUndoDeletedMessage={canUndoDeletedMessage}
               selectedMessageIds={selectedMergeMessageIds}
+              exportTargetMessageId={exportTargetMessageId}
               autoEditMessageId={pendingEditMessageId}
               isSelectingForMerge={isMergingMessages}
               collapsedMessageIds={collapsedMessageIds}
@@ -1480,6 +1514,7 @@ function App() {
               onAutoEditMessageHandled={() => setPendingEditMessageId(null)}
               onCollapsedMessageIdsChange={setCollapsedMessageIds}
               onToggleMessageSelection={toggleMergeMessageSelection}
+              onToggleExportTargetMessage={(message) => void toggleExportTargetMessage(message)}
               onMoveMessageAfter={(message, afterMessageId) => void moveMessageAfter(message, afterMessageId)}
               onMakeSelectionHeading={(message) => void makeSelectedTextHeading(message)}
               onInsertMessage={insertMessageIntoChatGpt}

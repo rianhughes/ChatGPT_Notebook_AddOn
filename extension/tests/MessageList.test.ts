@@ -738,7 +738,7 @@ describe("MessageList note headers", () => {
     });
   });
 
-  it("moves a note when its drag handle is dropped on another note", async () => {
+  it("moves a note when its header is dragged onto another note", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -774,16 +774,17 @@ describe("MessageList note headers", () => {
       );
     });
 
-    const handles = host.querySelectorAll<HTMLElement>(".message-drag-handle");
+    const headers = host.querySelectorAll<HTMLElement>(".message-collapse-strip");
     const rows = host.querySelectorAll<HTMLElement>(".message-row");
     const dataTransfer = fakeDataTransfer();
 
-    expect(handles).toHaveLength(2);
-    expect(handles[0].getAttribute("draggable")).toBe("true");
+    expect(headers).toHaveLength(2);
+    expect(headers[0].getAttribute("draggable")).toBe("true");
+    expect(host.querySelectorAll(".message-drag-handle")).toHaveLength(0);
     expect(rows[0].hasAttribute("draggable")).toBe(false);
 
     await act(() => {
-      handles[0].dispatchEvent(dragEvent("dragstart", dataTransfer));
+      headers[0].dispatchEvent(dragEvent("dragstart", dataTransfer));
     });
 
     await act(() => {
@@ -845,6 +846,72 @@ describe("MessageList note headers", () => {
     });
 
     expect(onToggleMessageSelection).toHaveBeenCalledWith(first.id);
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("puts note selection on the left and moves section tools to the lower action row", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = message("a", "Alpha beta");
+    const onToggleExportTargetMessage = vi.fn();
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          exportTargetMessageId: null,
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onToggleExportTargetMessage,
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit: vi.fn(async () => undefined),
+          onSaveMessageEdit: vi.fn(async () => undefined),
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText: vi.fn(),
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    const rows = host.querySelectorAll<HTMLElement>(".message-actions-row");
+    const topButtons = Array.from(rows[0]?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    const lowerButtons = Array.from(rows[1]?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+    const selectButton = host.querySelector<HTMLButtonElement>(".message-selection-tools .message-select-note-button");
+
+    expect(rows).toHaveLength(2);
+    expect(selectButton?.getAttribute("aria-label")).toBe("Select note");
+    expect(topButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Edit message",
+      "Delete note",
+      "Undo last note edit",
+      "Insert into ChatGPT",
+    ]);
+    expect(lowerButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Collapse all sections",
+      "Highlight text to make a collapsible header",
+    ]);
+
+    await act(() => {
+      selectButton?.click();
+    });
+
+    expect(onToggleExportTargetMessage).toHaveBeenCalledWith(note);
 
     await act(() => {
       root.unmount();

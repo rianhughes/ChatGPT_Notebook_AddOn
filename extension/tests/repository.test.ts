@@ -15,6 +15,7 @@ import {
   getActiveSaveTargetThread,
   getAssetsForThread,
   getFolders,
+  getActiveSaveTargetMessage,
   getNotebookAsset,
   getNotebookAutosaveMetadata,
   getMessagesInOrder,
@@ -37,6 +38,7 @@ import {
   recordNotebookDataMutation,
   restoreDeletedMessage,
   restoreNotebookSnapshot,
+  setActiveSaveTargetMessage,
   setActiveSaveTargetThread,
   updateMessageContent,
 } from "../src/core/repository";
@@ -315,6 +317,24 @@ describe("repository", () => {
       "source:notebook-message": true,
       "source:other": false,
     });
+  });
+
+  it("appends ChatGPT exports into the selected save target note", async () => {
+    const notebook = await createNotebook({ title: "Backend notes" });
+    const note = await appendMessage(notebook.id, messageInput("Draft note"));
+
+    await setActiveSaveTargetMessage(note.id);
+
+    const saved = await appendSavedMessageFromChatGpt(saveInput("export:one:click-1", "selected text"));
+    const notebookMessages = await getMessagesInOrder(notebook.id);
+
+    expect(saved.thread.id).toBe(notebook.id);
+    expect(saved.message.id).toBe(note.id);
+    expect(saved.status).toBe("updated");
+    expect((await getActiveSaveTargetMessage())?.id).toBe(note.id);
+    expect(notebookMessages).toHaveLength(1);
+    expect(notebookMessages[0].contentMarkdown).toBe("Draft note\n\nselected text");
+    expect(notebookMessages[0].contentText).toBe("Draft note selected text");
   });
 
   it("appends manually created notes to a notebook", async () => {

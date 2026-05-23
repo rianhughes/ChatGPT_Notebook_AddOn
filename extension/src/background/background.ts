@@ -65,7 +65,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       await noteNotebookDataChanged();
       const response: SaveChatGptMessageResponse = {
         sourceThreadId: message.payload.sourceThreadId,
-        sourceMessageKey: result.message.sourceMessageKey,
+        sourceMessageKey: message.payload.sourceMessageKey,
         savedMessageId: result.message.id,
         status: result.status,
       };
@@ -74,7 +74,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
         type: "SOURCE_MESSAGE_SAVED_STATE_CHANGED",
         payload: {
           sourceThreadId: message.payload.sourceThreadId,
-          sourceMessageKey: result.message.sourceMessageKey,
+          sourceMessageKey: message.payload.sourceMessageKey,
           saved: true,
         },
       });

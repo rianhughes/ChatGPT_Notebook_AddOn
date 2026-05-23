@@ -1233,17 +1233,6 @@ button {
   cursor: pointer;
 }
 
-.message-drag-handle {
-  display: flex;
-  width: 22px;
-  min-height: 44px;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-muted);
-  cursor: grab;
-  user-select: none;
-}
-
 .message-collapse-strip {
   display: flex;
   grid-column: 2;
@@ -1264,6 +1253,14 @@ button {
   line-height: 1.35;
   text-align: left;
   cursor: pointer;
+}
+
+.message-collapse-strip[draggable="true"] {
+  cursor: grab;
+}
+
+.message-collapse-strip[draggable="true"]:active {
+  cursor: grabbing;
 }
 
 .message-collapse-strip:hover,
@@ -1787,20 +1784,35 @@ button {
   position: sticky;
   top: 7px;
   z-index: 1;
-  display: flex;
+  display: grid;
+  width: max-content;
   max-width: 100%;
   grid-column: 3;
   grid-row: 1;
-  flex-wrap: nowrap;
   align-self: start;
   justify-self: end;
   gap: 4px;
-  overflow-x: auto;
+  overflow-x: visible;
   scrollbar-width: none;
-  border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
   padding: 0;
-  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  background: transparent;
+}
+
+.message-actions-row {
+  display: flex;
+  min-width: max-content;
+  gap: 4px;
+  align-items: center;
+}
+
+.message-actions-primary-row {
+  justify-content: flex-start;
+}
+
+.message-actions-secondary-row {
+  justify-content: flex-end;
 }
 
 .message-actions::-webkit-scrollbar {
@@ -1809,8 +1821,6 @@ button {
 
 .message-row.is-editing .message-actions {
   z-index: 11;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
-  background: color-mix(in srgb, var(--color-edit-bg) 92%, transparent);
 }
 
 .empty-state {
