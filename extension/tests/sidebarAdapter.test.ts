@@ -9,6 +9,7 @@ const mockExtensionApi = vi.hoisted(() => ({
     sidebarAction?: {
       setPanel?: ReturnType<typeof vi.fn>;
       open?: ReturnType<typeof vi.fn>;
+      toggle?: ReturnType<typeof vi.fn>;
     };
   },
 }));
@@ -31,6 +32,29 @@ describe("sidebar adapters", () => {
     await createChromeSidebarAdapter().initialize();
 
     expect(setPanelBehavior).toHaveBeenCalledWith({ openPanelOnActionClick: true });
+  });
+
+  it("leaves Chrome action-click toggling to the browser after configuring it", async () => {
+    const setPanelBehavior = vi.fn().mockResolvedValue(undefined);
+    const open = vi.fn().mockResolvedValue(undefined);
+    mockExtensionApi.browser.sidePanel = { setPanelBehavior, open };
+    const { createChromeSidebarAdapter } = await import("../src/background/sidebarAdapter.chrome");
+    const adapter = createChromeSidebarAdapter();
+
+    await adapter.initialize();
+    await adapter.toggleForCurrentWindow({ windowId: 123 });
+
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("falls back to opening Chrome side panel when native action toggling is unavailable", async () => {
+    const open = vi.fn().mockResolvedValue(undefined);
+    mockExtensionApi.browser.sidePanel = { open };
+    const { createChromeSidebarAdapter } = await import("../src/background/sidebarAdapter.chrome");
+
+    await createChromeSidebarAdapter().toggleForCurrentWindow({ windowId: 123 });
+
+    expect(open).toHaveBeenCalledWith({ windowId: 123 });
   });
 
   it("opens the Chrome side panel with a window id when available", async () => {
@@ -75,5 +99,17 @@ describe("sidebar adapters", () => {
 
     expect(setPanel).toHaveBeenCalledWith({ panel: "sidebar.html" });
     expect(open).toHaveBeenCalledWith();
+  });
+
+  it("toggles the Firefox sidebar from action clicks", async () => {
+    const toggle = vi.fn().mockResolvedValue(undefined);
+    const open = vi.fn().mockResolvedValue(undefined);
+    mockExtensionApi.browser.sidebarAction = { toggle, open };
+    const { createFirefoxSidebarAdapter } = await import("../src/background/sidebarAdapter.firefox");
+
+    await createFirefoxSidebarAdapter().toggleForCurrentWindow({ windowId: 123, tabId: 456 });
+
+    expect(toggle).toHaveBeenCalledWith();
+    expect(open).not.toHaveBeenCalled();
   });
 });

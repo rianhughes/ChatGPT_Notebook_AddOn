@@ -4761,6 +4761,14 @@ ${normalizeForKey(input.contentText)}`);
       async openForCurrentWindow() {
         var _a2;
         await ((_a2 = sidebarAction == null ? void 0 : sidebarAction.open) == null ? void 0 : _a2.call(sidebarAction));
+      },
+      async toggleForCurrentWindow() {
+        var _a2;
+        if (sidebarAction == null ? void 0 : sidebarAction.toggle) {
+          await sidebarAction.toggle();
+          return;
+        }
+        await ((_a2 = sidebarAction == null ? void 0 : sidebarAction.open) == null ? void 0 : _a2.call(sidebarAction));
       }
     };
   }
@@ -5164,7 +5172,7 @@ ${normalizeForKey(input.contentText)}`);
   }
   async function openSidebarFromActionClick(tab) {
     try {
-      await sidebarAdapter.openForCurrentWindow({
+      await sidebarAdapter.toggleForCurrentWindow({
         windowId: tab == null ? void 0 : tab.windowId,
         tabId: tab == null ? void 0 : tab.id
       });

@@ -168,7 +168,7 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
 
 async function openSidebarFromActionClick(tab?: ActionClickTab): Promise<void> {
   try {
-    await sidebarAdapter.openForCurrentWindow({
+    await sidebarAdapter.toggleForCurrentWindow({
       windowId: tab?.windowId,
       tabId: tab?.id,
     });
