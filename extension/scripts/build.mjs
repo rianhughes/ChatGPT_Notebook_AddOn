@@ -1,6 +1,6 @@
 import react from "@vitejs/plugin-react";
 import { build } from "vite";
-import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 const projectRoot = process.cwd();
@@ -48,7 +48,7 @@ copyRequiredFile(
   resolve(outDir, "manifest.json"),
 );
 copyRequiredFile(resolve(projectRoot, "src", "styles", "injected.css"), resolve(outDir, "injected.css"));
-copyRequiredFile(resolve(projectRoot, "src", "assets", "icon.png"), resolve(outDir, "icon.png"));
+copyAssetPngs(resolve(projectRoot, "src", "assets"), outDir);
 
 async function buildClassicEntry(name, entry, globalName) {
   await build({
@@ -77,4 +77,16 @@ function copyRequiredFile(from, to) {
   }
 
   copyFileSync(from, to);
+}
+
+function copyAssetPngs(fromDir, toDir) {
+  if (!existsSync(fromDir)) {
+    throw new Error(`Missing required build input: ${fromDir}`);
+  }
+
+  for (const entry of readdirSync(fromDir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".png")) {
+      copyRequiredFile(resolve(fromDir, entry.name), resolve(toDir, entry.name));
+    }
+  }
 }
