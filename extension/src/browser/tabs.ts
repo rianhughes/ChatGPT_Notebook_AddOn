@@ -16,6 +16,11 @@ type ScriptableTab = {
   url?: string;
 };
 
+type ChatGptTab = browser.Tabs.Tab & {
+  id: number;
+  url: string;
+};
+
 type ScriptingApi = {
   executeScript?: (details: { target: { tabId: number }; files: string[] }) => Promise<unknown>;
   insertCSS?: (details: { target: { tabId: number }; files: string[] }) => Promise<unknown>;
@@ -86,18 +91,45 @@ export async function broadcastToChatGptTabs(message: ExtensionMessage): Promise
 export async function sendMessageToActiveChatGptTab<TResponse>(
   message: ExtensionMessage,
 ): Promise<TResponse | null> {
-  const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-  const tab = tabs[0];
+  const tab = await getChatGptInsertionTarget();
 
-  if (!tab?.id || !tab.url || !isChatGptUrl(tab.url)) {
+  if (!tab) {
     return null;
   }
 
+  return sendMessageToChatGptTab(tab, message);
+}
+
+async function getChatGptInsertionTarget(): Promise<ChatGptTab | null> {
+  const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+  const currentWindowTab = tabs.find(isChatGptTab);
+
+  if (currentWindowTab) {
+    return currentWindowTab;
+  }
+
+  const activeChatGptTabs = await browser.tabs.query({ active: true, url: CHATGPT_MATCH_PATTERNS });
+  return activeChatGptTabs.find(isChatGptTab) ?? null;
+}
+
+async function sendMessageToChatGptTab<TResponse>(
+  tab: ChatGptTab,
+  message: ExtensionMessage,
+): Promise<TResponse | null> {
   try {
     return (await browser.tabs.sendMessage(tab.id, message)) as TResponse;
   } catch {
-    return null;
+    try {
+      await ensureChatGptContentScript(tab);
+      return (await browser.tabs.sendMessage(tab.id, message)) as TResponse;
+    } catch {
+      return null;
+    }
   }
+}
+
+function isChatGptTab(tab: browser.Tabs.Tab | undefined): tab is ChatGptTab {
+  return typeof tab?.id === "number" && typeof tab.url === "string" && isChatGptUrl(tab.url);
 }
 
 export async function ensureChatGptContentScript(tab: ScriptableTab): Promise<void> {

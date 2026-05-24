@@ -4,7 +4,6 @@ import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 const projectRoot = process.cwd();
-const repoRoot = existsSync(resolve(projectRoot, "..", "icon.png")) ? resolve(projectRoot, "..") : projectRoot;
 const target = process.env.BROWSER_TARGET ?? "firefox";
 const supportedTargets = new Set(["firefox", "chrome"]);
 
@@ -49,7 +48,7 @@ copyRequiredFile(
   resolve(outDir, "manifest.json"),
 );
 copyRequiredFile(resolve(projectRoot, "src", "styles", "injected.css"), resolve(outDir, "injected.css"));
-copyRequiredFile(resolve(repoRoot, "icon.png"), resolve(outDir, "icon.png"));
+copyRequiredFile(resolve(projectRoot, "src", "assets", "icon.png"), resolve(outDir, "icon.png"));
 
 async function buildClassicEntry(name, entry, globalName) {
   await build({

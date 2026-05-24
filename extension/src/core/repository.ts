@@ -524,6 +524,66 @@ export async function renameFolder(folderId: string, title: string): Promise<Not
   });
 }
 
+export async function moveFolderAfterFolder(
+  folderId: string,
+  afterFolderId: string | null,
+): Promise<NotebookFolder[]> {
+  return notesDb.transaction("rw", notesDb.folders, async () => {
+    const folders = sortFolders(await notesDb.folders.toArray());
+    const currentFolder = folders.find((folder) => folder.id === folderId);
+
+    if (!currentFolder) {
+      throw new Error(`Missing folder ${folderId}`);
+    }
+
+    if (afterFolderId === folderId) {
+      return folders;
+    }
+
+    const targetFolder = afterFolderId ? folders.find((folder) => folder.id === afterFolderId) : null;
+
+    if (afterFolderId && !targetFolder) {
+      throw new Error(`Missing target folder ${afterFolderId}`);
+    }
+
+    const withoutCurrentFolder = folders.filter((folder) => folder.id !== folderId);
+    const insertIndex = afterFolderId
+      ? withoutCurrentFolder.findIndex((folder) => folder.id === afterFolderId) + 1
+      : 0;
+
+    if (insertIndex < 0) {
+      throw new Error(`Missing target folder ${afterFolderId}`);
+    }
+
+    const reorderedFolders = [
+      ...withoutCurrentFolder.slice(0, insertIndex),
+      currentFolder,
+      ...withoutCurrentFolder.slice(insertIndex),
+    ];
+
+    if (reorderedFolders.every((folder, index) => folder.id === folders[index]?.id)) {
+      return folders;
+    }
+
+    const timestamp = Date.now();
+    const sortOrders = folders.map(getFolderSortOrder);
+    const nextFolderById = new Map(
+      reorderedFolders.map((folder, index) => [
+        folder.id,
+        {
+          ...folder,
+          sortOrder: sortOrders[index],
+          updatedAt: folder.id === folderId ? timestamp : folder.updatedAt,
+        },
+      ]),
+    );
+    const updatedFolders = folders.map((folder) => nextFolderById.get(folder.id) ?? folder);
+
+    await notesDb.folders.bulkPut(updatedFolders);
+    return sortFolders(updatedFolders);
+  });
+}
+
 export async function deleteFolder(folderId: string): Promise<void> {
   await notesDb.transaction("rw", notesDb.folders, notesDb.threads, async () => {
     const timestamp = Date.now();

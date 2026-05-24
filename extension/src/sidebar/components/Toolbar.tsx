@@ -5,6 +5,7 @@ import {
   FileDown,
   Merge,
   Pencil,
+  Plus,
   Undo2,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ type ToolbarProps = {
   onRenameThread(threadId: string, title: string): Promise<void>;
   onRequestExport(formatId: NotebookExportFormatId): void;
   onRequestPrintExport(): void;
+  onCreateNote(): void;
   onUndoNotebook(): void;
   onOpenStandaloneWindow(): void;
   onStartMergeSelection(): void;
@@ -50,6 +52,7 @@ export function Toolbar({
   onRenameThread,
   onRequestExport,
   onRequestPrintExport,
+  onCreateNote,
   onUndoNotebook,
   onOpenStandaloneWindow,
   onStartMergeSelection,
@@ -212,6 +215,17 @@ export function Toolbar({
                     Merge notes
                   </button>
                 )}
+                <button
+                  className="tool-button secondary selected-thread-new-note-button"
+                  type="button"
+                  title="Create new note"
+                  aria-label="Create new note"
+                  disabled={!selectedThread}
+                  onClick={onCreateNote}
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  New note
+                </button>
                 <button
                   className="tool-button secondary selected-thread-edit-button"
                   type="button"

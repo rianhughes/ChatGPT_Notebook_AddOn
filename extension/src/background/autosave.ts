@@ -102,10 +102,14 @@ async function flushAutosave(): Promise<void> {
       dataRevision: backupData.dataRevision,
       exportedAt: backupData.exportedAt,
     });
-    await writeBackupFilesToDownloads([
-      { filename: latestFilename, contents },
-      { filename: dailyFilename, contents },
-    ]);
+
+    if (shouldWriteAutomaticBackupDownloads()) {
+      await writeBackupFilesToDownloads([
+        { filename: latestFilename, contents },
+        { filename: dailyFilename, contents },
+      ]);
+    }
+
     await cleanupOldDailyBackups(backupDate);
     await markNotebookBackupSucceeded({
       revision: metadata.dataRevision,
@@ -127,6 +131,10 @@ async function flushAutosave(): Promise<void> {
       scheduleAutosave();
     }
   }
+}
+
+function shouldWriteAutomaticBackupDownloads(): boolean {
+  return __BROWSER_TARGET__ !== "chrome";
 }
 
 function getAutosaveState(metadata: Awaited<ReturnType<typeof getNotebookAutosaveMetadata>>): AutosaveStatusState {

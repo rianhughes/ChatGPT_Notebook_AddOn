@@ -1,9 +1,0 @@
-Features:
-
-1. Add highlighted text directly into the selected box
-2. Export to ios notes, google notes, etc
-
-Misc:
-
-1. Actually use it and see the pain points and things to be imporved.
-2. Check performance

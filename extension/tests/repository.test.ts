@@ -26,6 +26,7 @@ import {
   getThreads,
   mergeMessages,
   mergeNotebookDataFromBackup,
+  moveFolderAfterFolder,
   moveMessageAfterMessage,
   moveThreadAfterThread,
   moveThreadToFolder,
@@ -403,6 +404,20 @@ describe("repository", () => {
     expect((await getFolders()).map((item) => item.id)).toEqual([personal.id]);
     expect((await getThread(first.id))?.folderId).toBeNull();
     expect((await getThread(second.id))?.folderId).toBeNull();
+  });
+
+  it("moves folders directly after another folder", async () => {
+    const work = await createFolder({ title: "Work" });
+    const personal = await createFolder({ title: "Personal" });
+    const archive = await createFolder({ title: "Archive" });
+
+    expect((await getFolders()).map((item) => item.id)).toEqual([archive.id, personal.id, work.id]);
+
+    await moveFolderAfterFolder(work.id, archive.id);
+    expect((await getFolders()).map((item) => item.id)).toEqual([archive.id, work.id, personal.id]);
+
+    await moveFolderAfterFolder(personal.id, null);
+    expect((await getFolders()).map((item) => item.id)).toEqual([personal.id, archive.id, work.id]);
   });
 
   it("moves notebooks directly after another notebook within the same folder", async () => {

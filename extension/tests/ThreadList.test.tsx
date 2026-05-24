@@ -132,6 +132,36 @@ describe("ThreadList folders", () => {
     );
   });
 
+  it("calls folder reorder when a folder is dropped after another folder", async () => {
+    const onMoveFolderAfter = vi.fn();
+
+    await renderThreadList({
+      onMoveFolderAfter,
+      folders: [
+        folder({ id: "work", title: "Work" }),
+        folder({ id: "personal", title: "Personal" }),
+      ],
+      threads: [],
+    });
+
+    const dragged = getFolderRow("work");
+    const target = getFolderRow("personal");
+    const dataTransfer = createDataTransfer();
+    setRowBounds(target, { top: 0, height: 100 });
+
+    await act(() => {
+      dragged.dispatchEvent(createDragEvent("dragstart", { dataTransfer }));
+    });
+    await act(() => {
+      target.dispatchEvent(createDragEvent("dragover", { clientY: 75, dataTransfer }));
+    });
+    await act(() => {
+      target.dispatchEvent(createDragEvent("drop", { clientY: 75, dataTransfer }));
+    });
+
+    expect(onMoveFolderAfter).toHaveBeenCalledWith(expect.objectContaining({ id: "work" }), "personal");
+  });
+
   it("keeps backup import and export in the expandable notebook bar tools", async () => {
     const onExportBackup = vi.fn();
 
@@ -175,21 +205,25 @@ type RenderThreadListOptions = {
   onRenameThread?: (threadId: string, title: string) => void;
   onRenameFolder?: (folderId: string, title: string) => void;
   onMoveThreadAfter?: (thread: ChatGptThread, afterThreadId: string | null) => void;
+  onMoveFolderAfter?: (folder: NotebookFolder, afterFolderId: string | null) => void;
   onExportBackup?: () => void;
   autosaveControl?: ReactNode;
   threads?: ChatGptThread[];
+  folders?: NotebookFolder[];
 };
 
 async function renderThreadList({
   onRenameThread = vi.fn(),
   onRenameFolder = vi.fn(),
   onMoveThreadAfter = vi.fn(),
+  onMoveFolderAfter = vi.fn(),
   onExportBackup = vi.fn(),
   autosaveControl,
   threads = [
     thread({ id: "thread-work", title: "Work notebook", folderId: "work" }),
     thread({ id: "thread-loose", title: "Loose notebook", folderId: null }),
   ],
+  folders = [folder({ id: "work", title: "Work" })],
 }: RenderThreadListOptions = {}) {
   host = document.createElement("div");
   root = createRoot(host);
@@ -198,7 +232,7 @@ async function renderThreadList({
     root?.render(
       <ThreadList
         threads={threads}
-        folders={[folder({ id: "work", title: "Work" })]}
+        folders={folders}
         filter=""
         newNotebookTitle=""
         newFolderTitle=""
@@ -216,6 +250,7 @@ async function renderThreadList({
         onRenameFolder={onRenameFolder}
         onMoveThreadToFolder={vi.fn()}
         onMoveThreadAfter={onMoveThreadAfter}
+        onMoveFolderAfter={onMoveFolderAfter}
         onDeleteThread={vi.fn()}
         onDeleteFolder={vi.fn()}
         onExportBackup={onExportBackup}
@@ -223,6 +258,16 @@ async function renderThreadList({
       />,
     );
   });
+}
+
+function getFolderRow(folderId: string): HTMLElement {
+  const row = host?.querySelector<HTMLElement>(`[data-notebook-folder-row-id="${folderId}"]`) ?? null;
+
+  if (!row) {
+    throw new Error(`Missing folder row ${folderId}`);
+  }
+
+  return row;
 }
 
 function getThreadRow(threadId: string): HTMLElement {

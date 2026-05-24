@@ -70,6 +70,7 @@ import {
   getThreads,
   mergeMessages,
   mergeNotebookDataFromBackup,
+  moveFolderAfterFolder,
   moveMessageAfterMessage,
   moveThreadAfterThread,
   moveThreadToFolder,
@@ -522,6 +523,19 @@ function App() {
       await loadThreads();
     } catch {
       setError("Could not reorder notebooks.");
+    }
+  }
+
+  async function moveFolderAfter(folder: NotebookFolder, afterFolderId: string | null) {
+    setError("");
+    setStatus("");
+
+    try {
+      await moveFolderAfterFolder(folder.id, afterFolderId);
+      void notifyNotebookDataChanged("folder-reordered");
+      await loadFolders();
+    } catch {
+      setError("Could not reorder folders.");
     }
   }
 
@@ -1481,6 +1495,7 @@ function App() {
             onRenameThread={updateSelectedThreadTitle}
             onRequestExport={(formatId) => void exportSelectedNotebook(formatId)}
             onRequestPrintExport={() => void printSelectedNotebookAsPdf()}
+            onCreateNote={() => void createNoteInSelectedNotebook()}
             onUndoNotebook={() => void undoNotebookChange()}
             onOpenStandaloneWindow={() => void openStandaloneWindow()}
             onStartMergeSelection={startMergeSelection}
@@ -1563,6 +1578,7 @@ function App() {
             onRenameFolder={(folderId, title) => void updateFolderTitle(folderId, title)}
             onMoveThreadToFolder={(thread, folderId) => void moveThreadFolder(thread, folderId)}
             onMoveThreadAfter={(thread, afterThreadId) => void moveThreadAfter(thread, afterThreadId)}
+            onMoveFolderAfter={(folder, afterFolderId) => void moveFolderAfter(folder, afterFolderId)}
             onDeleteThread={(thread) => void removeThread(thread)}
             onDeleteFolder={(folder) => void removeFolder(folder)}
             onExportBackup={() => void exportFullBackup()}

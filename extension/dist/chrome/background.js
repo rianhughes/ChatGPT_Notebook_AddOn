@@ -1106,16 +1106,35 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
     );
   }
   async function sendMessageToActiveChatGptTab(message) {
-    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-    const tab = tabs[0];
-    if (!(tab == null ? void 0 : tab.id) || !tab.url || !isChatGptUrl(tab.url)) {
+    const tab = await getChatGptInsertionTarget();
+    if (!tab) {
       return null;
     }
+    return sendMessageToChatGptTab(tab, message);
+  }
+  async function getChatGptInsertionTarget() {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    const currentWindowTab = tabs.find(isChatGptTab);
+    if (currentWindowTab) {
+      return currentWindowTab;
+    }
+    const activeChatGptTabs = await browser.tabs.query({ active: true, url: CHATGPT_MATCH_PATTERNS });
+    return activeChatGptTabs.find(isChatGptTab) ?? null;
+  }
+  async function sendMessageToChatGptTab(tab, message) {
     try {
       return await browser.tabs.sendMessage(tab.id, message);
     } catch {
-      return null;
+      try {
+        await ensureChatGptContentScript(tab);
+        return await browser.tabs.sendMessage(tab.id, message);
+      } catch {
+        return null;
+      }
     }
+  }
+  function isChatGptTab(tab) {
+    return typeof (tab == null ? void 0 : tab.id) === "number" && typeof tab.url === "string" && isChatGptUrl(tab.url);
   }
   async function ensureChatGptContentScript(tab) {
     var _a2;
@@ -4980,10 +4999,7 @@ ${normalizeForKey(input.contentText)}`);
         dataRevision: backupData.dataRevision,
         exportedAt: backupData.exportedAt
       });
-      await writeBackupFilesToDownloads([
-        { filename: latestFilename, contents },
-        { filename: dailyFilename, contents }
-      ]);
+      if (shouldWriteAutomaticBackupDownloads()) ;
       await cleanupOldDailyBackups(backupDate);
       await markNotebookBackupSucceeded({
         revision: metadata.dataRevision,
@@ -5003,6 +5019,9 @@ ${normalizeForKey(input.contentText)}`);
         scheduleAutosave();
       }
     }
+  }
+  function shouldWriteAutomaticBackupDownloads() {
+    return false;
   }
   function getAutosaveState(metadata) {
     if (transientState === "saving") {
@@ -5138,8 +5157,7 @@ ${normalizeForKey(input.contentText)}`);
       case "INSERT_TEXT_IN_CHATGPT": {
         const response = await sendMessageToActiveChatGptTab(message);
         return response ?? {
-          inserted: false,
-          error: "Open a ChatGPT tab before inserting notes."
+          inserted: false
         };
       }
       case "SUBMIT_AI_OPERATION_PACKAGE": {

@@ -112,7 +112,6 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       return (
         response ?? {
           inserted: false,
-          error: "Open a ChatGPT tab before inserting notes.",
         }
       );
     }

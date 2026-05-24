@@ -37,7 +37,10 @@
   ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "chatgpt-notes-sidebar@example.local"
+      "id": "@chatgpt-notebook.rianhughes",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   }
 }

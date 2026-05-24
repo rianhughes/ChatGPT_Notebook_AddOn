@@ -38,7 +38,7 @@ describe("notebook autosave", () => {
     vi.restoreAllMocks();
   });
 
-  it("writes automatic backups to downloads and keeps an extension copy", async () => {
+  it("keeps an extension backup copy and only writes automatic downloads outside Chrome", async () => {
     vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 4, 22, 9, 30, 0));
     const notebook = await createNotebook({ title: "Private storage" });
 
@@ -65,24 +65,30 @@ describe("notebook autosave", () => {
       backupDate: "2026-05-22",
       filename: "chatgpt-notes-autobackup-2026-05-22.json",
     });
-    expect(mockExtensionApi.browser.downloads.download).toHaveBeenCalledTimes(2);
-    expect(mockExtensionApi.browser.downloads.download).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        filename: "ChatGPT Notebook Backups/chatgpt-notes-autobackup-latest.json",
-        saveAs: false,
-        conflictAction: "overwrite",
-      }),
-    );
-    expect(mockExtensionApi.browser.downloads.download).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        filename: "ChatGPT Notebook Backups/chatgpt-notes-autobackup-2026-05-22.json",
-        saveAs: false,
-        conflictAction: "overwrite",
-      }),
-    );
-    expect(mockExtensionApi.browser.downloads.download.mock.calls[0]?.[0]?.url).toBe("blob:chatgpt-notebook-backup");
+
+    if (__BROWSER_TARGET__ === "chrome") {
+      expect(mockExtensionApi.browser.downloads.download).not.toHaveBeenCalled();
+    } else {
+      expect(mockExtensionApi.browser.downloads.download).toHaveBeenCalledTimes(2);
+      expect(mockExtensionApi.browser.downloads.download).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          filename: "ChatGPT Notebook Backups/chatgpt-notes-autobackup-latest.json",
+          saveAs: false,
+          conflictAction: "overwrite",
+        }),
+      );
+      expect(mockExtensionApi.browser.downloads.download).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          filename: "ChatGPT Notebook Backups/chatgpt-notes-autobackup-2026-05-22.json",
+          saveAs: false,
+          conflictAction: "overwrite",
+        }),
+      );
+      expect(mockExtensionApi.browser.downloads.download.mock.calls[0]?.[0]?.url).toBe("blob:chatgpt-notebook-backup");
+    }
+
     expect(JSON.parse(latest?.contents ?? "{}")).toMatchObject({
       app: "chatgpt-notes-sidebar",
       backupVersion: 1,

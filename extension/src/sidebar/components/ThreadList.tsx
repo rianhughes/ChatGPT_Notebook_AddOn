@@ -20,6 +20,8 @@ import type { ChatGptThread, NotebookFolder } from "../../core/models";
 import { SearchBox } from "./SearchBox";
 
 const NO_FOLDER_DROP_TARGET = "__no-folder__";
+const THREAD_DRAG_DATA_TYPE = "application/x-chatgpt-notebook-thread-id";
+const FOLDER_DRAG_DATA_TYPE = "application/x-chatgpt-notebook-folder-id";
 
 type FolderDropTarget = string | typeof NO_FOLDER_DROP_TARGET;
 
@@ -43,6 +45,7 @@ type ThreadListProps = {
   onRenameFolder(folderId: string, title: string): void;
   onMoveThreadToFolder(thread: ChatGptThread, folderId: string | null): void;
   onMoveThreadAfter(thread: ChatGptThread, afterThreadId: string | null): void;
+  onMoveFolderAfter(folder: NotebookFolder, afterFolderId: string | null): void;
   onDeleteThread(thread: ChatGptThread): void;
   onDeleteFolder(folder: NotebookFolder): void;
   onExportBackup(): void;
@@ -69,6 +72,7 @@ export function ThreadList({
   onRenameFolder,
   onMoveThreadToFolder,
   onMoveThreadAfter,
+  onMoveFolderAfter,
   onDeleteThread,
   onDeleteFolder,
   onExportBackup,
@@ -82,6 +86,7 @@ export function ThreadList({
   const folderIds = new Set(folders.map((folder) => folder.id));
   const shouldGroupThreads = isFullPage && folders.length > 0;
   const canDragThreads = shouldGroupThreads;
+  const canDragFolders = shouldGroupThreads && !normalizedFilter;
   const unfiledThreads = visibleThreads.filter((thread) => getThreadFolderId(thread) === null);
   const [searchOpen, setSearchOpen] = useState(Boolean(normalizedFilter));
   const [createOpen, setCreateOpen] = useState(false);
@@ -96,9 +101,14 @@ export function ThreadList({
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingFolderTitle, setEditingFolderTitle] = useState("");
   const [draggingThreadId, setDraggingThreadId] = useState<string | null>(null);
+  const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
   const [dragOverFolderTarget, setDragOverFolderTarget] = useState<FolderDropTarget | null>(null);
   const [dropTargetThread, setDropTargetThread] = useState<{
     threadId: string;
+    position: "before" | "after";
+  } | null>(null);
+  const [dropTargetFolder, setDropTargetFolder] = useState<{
+    folderId: string;
     position: "before" | "after";
   } | null>(null);
   const [pendingCreateFocus, setPendingCreateFocus] = useState<"notebook" | "folder" | null>(null);
@@ -173,7 +183,8 @@ export function ThreadList({
   }
 
   function getDraggedThread(event?: DragEvent<HTMLElement>): ChatGptThread | null {
-    const dataTransferThreadId = event?.dataTransfer.getData("text/plain") || null;
+    const dataTransferThreadId =
+      event?.dataTransfer.getData(THREAD_DRAG_DATA_TYPE) || event?.dataTransfer.getData("text/plain") || null;
     const threadId = draggingThreadId ?? dataTransferThreadId;
 
     if (!threadId) {
@@ -181,6 +192,18 @@ export function ThreadList({
     }
 
     return threads.find((thread) => thread.id === threadId) ?? null;
+  }
+
+  function getDraggedFolder(event?: DragEvent<HTMLElement>): NotebookFolder | null {
+    const dataTransferFolderId =
+      event?.dataTransfer.getData(FOLDER_DRAG_DATA_TYPE) || event?.dataTransfer.getData("text/plain") || null;
+    const folderId = draggingFolderId ?? dataTransferFolderId;
+
+    if (!folderId) {
+      return null;
+    }
+
+    return folders.find((folder) => folder.id === folderId) ?? null;
   }
 
   function getDropPosition(event: DragEvent<HTMLElement>): "before" | "after" {
@@ -196,8 +219,20 @@ export function ThreadList({
       classes.push("is-drop-target");
     }
 
+    if (draggingFolderId && target !== NO_FOLDER_DROP_TARGET) {
+      classes.push("is-folder-sort-target");
+    }
+
+    if (draggingFolderId === target) {
+      classes.push("is-dragging");
+    }
+
     if (dragOverFolderTarget === target) {
       classes.push("is-drag-over");
+    }
+
+    if (dropTargetFolder?.folderId === target) {
+      classes.push(dropTargetFolder.position === "before" ? "is-drop-before" : "is-drop-after");
     }
 
     if (isFolderCollapsed(target)) {
@@ -290,14 +325,50 @@ export function ThreadList({
     }
 
     event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(THREAD_DRAG_DATA_TYPE, thread.id);
     event.dataTransfer.setData("text/plain", thread.id);
     setDraggingThreadId(thread.id);
+    setDraggingFolderId(null);
   }
 
   function handleThreadDragEnd() {
     setDraggingThreadId(null);
     setDragOverFolderTarget(null);
     setDropTargetThread(null);
+    setDropTargetFolder(null);
+  }
+
+  function handleFolderDragStart(folder: NotebookFolder, event: DragEvent<HTMLElement>) {
+    if (!canDragFolders || editingFolderId === folder.id) {
+      event.preventDefault();
+      return;
+    }
+
+    const dragStartTarget = event.target instanceof HTMLElement ? event.target : null;
+
+    if (dragStartTarget?.closest("[data-notebook-thread-row-id]")) {
+      return;
+    }
+
+    if (dragStartTarget?.closest("input, select, textarea, .folder-row-actions")) {
+      event.preventDefault();
+      return;
+    }
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(FOLDER_DRAG_DATA_TYPE, folder.id);
+    event.dataTransfer.setData("text/plain", folder.id);
+    setDraggingFolderId(folder.id);
+    setDraggingThreadId(null);
+    setDragOverFolderTarget(null);
+    setDropTargetThread(null);
+  }
+
+  function handleFolderDragEnd() {
+    setDraggingFolderId(null);
+    setDragOverFolderTarget(null);
+    setDropTargetThread(null);
+    setDropTargetFolder(null);
   }
 
   function handleThreadDragOver(targetThread: ChatGptThread, event: DragEvent<HTMLElement>) {
@@ -345,6 +416,7 @@ export function ThreadList({
     setDraggingThreadId(null);
     setDragOverFolderTarget(null);
     setDropTargetThread(null);
+    setDropTargetFolder(null);
 
     if (draggedThread.id === targetThread.id) {
       return;
@@ -364,6 +436,7 @@ export function ThreadList({
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     setDragOverFolderTarget(target);
+    setDropTargetFolder(null);
   }
 
   function handleFolderDragLeave(target: FolderDropTarget, event: DragEvent<HTMLElement>) {
@@ -374,6 +447,7 @@ export function ThreadList({
     }
 
     setDragOverFolderTarget((currentTarget) => (currentTarget === target ? null : currentTarget));
+    setDropTargetFolder((currentTarget) => (currentTarget?.folderId === target ? null : currentTarget));
   }
 
   function handleFolderDrop(target: FolderDropTarget, event: DragEvent<HTMLElement>) {
@@ -383,6 +457,7 @@ export function ThreadList({
     setDraggingThreadId(null);
     setDragOverFolderTarget(null);
     setDropTargetThread(null);
+    setDropTargetFolder(null);
 
     if (!draggedThread) {
       return;
@@ -395,6 +470,53 @@ export function ThreadList({
     }
 
     onMoveThreadToFolder(draggedThread, folderId);
+  }
+
+  function handleFolderGroupDragOver(targetFolder: NotebookFolder, event: DragEvent<HTMLElement>) {
+    const draggedFolder = getDraggedFolder(event);
+
+    if (draggedFolder) {
+      if (draggedFolder.id === targetFolder.id) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      setDragOverFolderTarget(null);
+      setDropTargetThread(null);
+      setDropTargetFolder({ folderId: targetFolder.id, position: getDropPosition(event) });
+      return;
+    }
+
+    handleFolderDragOver(targetFolder.id, event);
+  }
+
+  function handleFolderGroupDrop(targetFolder: NotebookFolder, event: DragEvent<HTMLElement>) {
+    const draggedFolder = getDraggedFolder(event);
+
+    if (draggedFolder) {
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggingFolderId(null);
+      setDragOverFolderTarget(null);
+      setDropTargetThread(null);
+      setDropTargetFolder(null);
+
+      if (draggedFolder.id === targetFolder.id) {
+        return;
+      }
+
+      const targetPosition =
+        dropTargetFolder?.folderId === targetFolder.id ? dropTargetFolder.position : getDropPosition(event);
+      const targetIndex = folders.findIndex((folder) => folder.id === targetFolder.id);
+      const afterFolderId = targetPosition === "before" ? folders[targetIndex - 1]?.id ?? null : targetFolder.id;
+
+      onMoveFolderAfter(draggedFolder, afterFolderId);
+      return;
+    }
+
+    handleFolderDrop(targetFolder.id, event);
   }
 
   function renderThreadRows(groupThreads: ChatGptThread[]) {
@@ -521,11 +643,15 @@ export function ThreadList({
             <section
               className={getFolderGroupClassName(dropTarget)}
               key={folder.id}
+              data-notebook-folder-row-id={folder.id}
+              draggable={canDragFolders && !isEditingFolder}
               aria-labelledby={`folder-${folder.id}`}
-              onDragEnter={(event) => handleFolderDragOver(dropTarget, event)}
+              onDragEnd={handleFolderDragEnd}
+              onDragEnter={(event) => handleFolderGroupDragOver(folder, event)}
               onDragLeave={(event) => handleFolderDragLeave(dropTarget, event)}
-              onDragOver={(event) => handleFolderDragOver(dropTarget, event)}
-              onDrop={(event) => handleFolderDrop(dropTarget, event)}
+              onDragOver={(event) => handleFolderGroupDragOver(folder, event)}
+              onDragStart={(event) => handleFolderDragStart(folder, event)}
+              onDrop={(event) => handleFolderGroupDrop(folder, event)}
             >
               <div className="folder-group-header">
                 {isEditingFolder ? (
@@ -564,23 +690,30 @@ export function ThreadList({
                     </button>
                   </form>
                 ) : (
-                  <button
-                    className="folder-group-title-button"
-                    type="button"
-                    title={folderCollapsed ? `Expand ${folder.title}` : `Collapse ${folder.title}`}
-                    aria-expanded={!folderCollapsed}
-                    aria-controls={folderContentId}
-                    onClick={() => toggleFolderCollapsed(dropTarget)}
-                  >
-                    <ChevronDown className="folder-group-collapse-icon" size={16} aria-hidden="true" />
-                    <Folder size={16} aria-hidden="true" />
-                    <span id={`folder-${folder.id}`} className="folder-group-title">
-                      {folder.title}
-                    </span>
-                    <span className="folder-group-count">
-                      {folderThreads.length} {folderThreads.length === 1 ? "notebook" : "notebooks"}
-                    </span>
-                  </button>
+                  <>
+                    {canDragFolders ? (
+                      <span className="folder-drag-handle" title="Drag folder to reorder" aria-hidden="true">
+                        <GripVertical size={15} aria-hidden="true" />
+                      </span>
+                    ) : null}
+                    <button
+                      className="folder-group-title-button"
+                      type="button"
+                      title={folderCollapsed ? `Expand ${folder.title}` : `Collapse ${folder.title}`}
+                      aria-expanded={!folderCollapsed}
+                      aria-controls={folderContentId}
+                      onClick={() => toggleFolderCollapsed(dropTarget)}
+                    >
+                      <ChevronDown className="folder-group-collapse-icon" size={16} aria-hidden="true" />
+                      <Folder size={16} aria-hidden="true" />
+                      <span id={`folder-${folder.id}`} className="folder-group-title">
+                        {folder.title}
+                      </span>
+                      <span className="folder-group-count">
+                        {folderThreads.length} {folderThreads.length === 1 ? "notebook" : "notebooks"}
+                      </span>
+                    </button>
+                  </>
                 )}
                 <div className="folder-row-actions">
                   {isEditingFolder ? null : (

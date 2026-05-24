@@ -7,6 +7,8 @@
     "build": "npm run build:firefox",
     "build:firefox": "BROWSER_TARGET=firefox node scripts/build.mjs",
     "build:chrome": "BROWSER_TARGET=chrome node scripts/build.mjs",
+    "package:zips": "bash scripts/build-store-zips.sh",
+    "package:stores": "node scripts/package-stores.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
