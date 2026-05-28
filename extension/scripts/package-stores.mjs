@@ -36,9 +36,13 @@ if (shouldPackageSource) {
   rmSync(sourceArchivePath, { force: true });
   createZipArchive(repoRoot, sourceArchivePath, {
     exclude(relativePath) {
+      const fileName = relativePath.split("/").pop() ?? relativePath;
+
       return (
         relativePath === ".git" ||
         relativePath.startsWith(".git/") ||
+        fileName === ".env" ||
+        (fileName.startsWith(".env.") && fileName !== ".env.example") ||
         relativePath === "node_modules" ||
         relativePath.startsWith("node_modules/") ||
         relativePath === "extension/dist" ||

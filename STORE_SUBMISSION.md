@@ -23,11 +23,21 @@ If AMO reports that the ID is already taken, choose a new unique ID before first
 
 ## Generated Upload Files
 
-- Chrome Web Store: `extension/dist/chatgpt-notebook-chrome-0.1.0.zip`
-- Firefox Add-ons: `extension/dist/chatgpt-notebook-firefox-0.1.0.zip`
-- Firefox reviewer source archive: `extension/dist/chatgpt-notebook-source-0.1.0.zip`
+- Chrome Web Store: `extension/dist/chatgpt-notebook-chrome-0.1.1.zip`
+- Firefox Add-ons: `extension/dist/chatgpt-notebook-firefox-0.1.1.zip`
+- Firefox reviewer source archive: `extension/dist/chatgpt-notebook-source-0.1.1.zip`
 
 Upload the Chrome zip to the Chrome Web Store dashboard. Upload the Firefox zip to addons.mozilla.org. If Mozilla requests source code for review, upload the source archive and point reviewers to `extension/scripts/build.mjs` and `extension/scripts/package-stores.mjs`.
+
+## Firefox 0.1.1 Release Notes
+
+```text
+Adds optional Google sign-in for Supabase cloud backup and restore.
+
+Users can back up notebook JSON, folders, notes, pending ChatGPT note operations, and image assets to the configured Supabase project, then restore the latest cloud backup on another browser/device. The Notebooks tab now shows the signed-in email address, and cloud restore displays an in-progress indicator while local notebooks are being restored.
+
+This version adds the identity permission for Google sign-in and https://*.supabase.co/* host access for optional Supabase backup and restore. Local notebook use still works without signing in.
+```
 
 ## Listing Copy
 
@@ -40,11 +50,11 @@ Save useful ChatGPT and DeepWiki content into a searchable local notebook.
 Long description:
 
 ```text
-ChatGPT Notebook helps you save useful messages, excerpts, images, and notes from supported research pages into a local browser sidebar notebook.
+ChatGPT Notebook helps you save useful messages, excerpts, images, and notes from supported research pages into a browser sidebar notebook.
 
 Use it to collect important ChatGPT answers, organize notebooks by conversation, search saved notes, merge or reorder notes, copy notebook content, insert notes back into ChatGPT, and export or back up your notebook data.
 
-Notebook data is stored locally in your browser. The extension does not run analytics, advertising, tracking, or a remote sync service.
+Notebook data is stored locally by default. Optional Google sign-in enables cloud backup and restore through Supabase. The extension does not run analytics, advertising, tracking, or sell user data.
 ```
 
 Category suggestion:
@@ -105,12 +115,24 @@ Host permissions:
 Runs only on https://chatgpt.com/*, https://chat.openai.com/*, and https://deepwiki.com/* so the extension can add save controls, read selected user-requested content, and insert notebook text when requested.
 ```
 
+`identity`:
+
+```text
+Completes Google sign-in for optional cloud backup and restore.
+```
+
+`https://*.supabase.co/*`:
+
+```text
+Connects to the configured Supabase project for optional cloud backup and restore.
+```
+
 ## Privacy Answers
 
 Data collection summary:
 
 ```text
-The extension stores saved notebook content locally in the user's browser. It does not transmit notebook data to the developer, does not use analytics, and does not sell or share user data.
+The extension stores saved notebook content locally in the user's browser by default. If the user enables optional cloud backup and signs in with Google, the extension sends backup data to the configured Supabase project for backup and restore. It does not use analytics, advertising, or tracking, and does not sell user data.
 ```
 
 Firefox manifest data collection declaration:
@@ -128,7 +150,7 @@ The extension does not load or execute remote code. JavaScript and CSS are bundl
 Single purpose:
 
 ```text
-The extension's single purpose is to let users save, organize, search, export, back up, and reuse selected ChatGPT and DeepWiki content in a local notebook.
+The extension's single purpose is to let users save, organize, search, export, back up, restore, and reuse selected ChatGPT and DeepWiki content in a notebook.
 ```
 
 Privacy policy:
