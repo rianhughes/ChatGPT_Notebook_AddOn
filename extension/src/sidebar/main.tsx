@@ -28,6 +28,7 @@ import type {
   ActiveChatGptContextResponse,
   ActiveSaveTargetResponse,
   AutosaveStatusResponse,
+  CloudBackupListResponse,
   CloudBackupStatusResponse,
   DeleteCloudBackupsResponse,
   InsertTextInChatGptResponse,
@@ -277,7 +278,11 @@ function App() {
       });
 
       setCloudBackupStatus(nextStatus);
-      setStatus("Signed in to cloud backup.");
+      const restored = await maybeRestoreCloudBackupOnEmptyDevice(nextStatus);
+
+      if (!restored) {
+        setStatus("Signed in to cloud backup.");
+      }
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not sign in with Google.");
       void loadCloudBackupStatus();
@@ -358,33 +363,7 @@ function App() {
     }
 
     try {
-      const response = await sendRuntimeMessage<RestoreCloudBackupResponse>({
-        type: "RESTORE_CLOUD_BACKUP",
-        payload: { backupId },
-      });
-
-      if (!response.restored) {
-        setError(response.error ?? "Could not restore cloud backup.");
-        return;
-      }
-
-      resetCollapsedMessages();
-      setMessageUndoHistory({});
-      setNotebookUndoHistory({});
-      setLastDeletedMessage(null);
-      setIsMergingMessages(false);
-      setSelectedMergeMessageIds(new Set());
-      setSelectedThreadId(null);
-      setIsNotebookOpen(false);
-      await loadMessages(null);
-      await Promise.all([
-        loadThreads(),
-        loadFolders(),
-        loadAiOperationProposals(),
-        loadAutosaveStatus(),
-        loadCloudBackupStatus(),
-      ]);
-      setStatus("Cloud backup restored.");
+      await restoreCloudBackupToDevice(backupId, "Cloud backup restored.");
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not restore cloud backup.");
       void loadCloudBackupStatus();
@@ -565,6 +544,72 @@ function App() {
     defaultCollapsedThreadIdRef.current = null;
     knownDefaultCollapsedMessageIdsRef.current = new Set();
     setCollapsedMessageIds(new Set());
+  }
+
+  async function maybeRestoreCloudBackupOnEmptyDevice(nextStatus: CloudBackupStatusResponse): Promise<boolean> {
+    if (!nextStatus.configured || !nextStatus.signedIn) {
+      return false;
+    }
+
+    const [localThreads, localFolders, localProposals] = await Promise.all([
+      getThreads(),
+      getFolders(),
+      getAiOperationProposals(),
+    ]);
+
+    if (localThreads.length > 0 || localFolders.length > 0 || localProposals.length > 0) {
+      return false;
+    }
+
+    const { backups } = await sendRuntimeMessage<CloudBackupListResponse>({
+      type: "LIST_CLOUD_BACKUPS",
+      payload: {},
+    });
+    const latestBackup = backups.find((backup) => backup.kind === "latest") ?? backups[0] ?? null;
+
+    if (!latestBackup) {
+      return false;
+    }
+
+    setStatus("Found cloud backup. Restoring notes to this device.");
+    const restored = await restoreCloudBackupToDevice(latestBackup.id, "Signed in and restored cloud backup.");
+
+    if (!restored) {
+      setStatus("Signed in to cloud backup.");
+    }
+
+    return true;
+  }
+
+  async function restoreCloudBackupToDevice(backupId: string, successMessage: string): Promise<boolean> {
+    const response = await sendRuntimeMessage<RestoreCloudBackupResponse>({
+      type: "RESTORE_CLOUD_BACKUP",
+      payload: { backupId },
+    });
+
+    if (!response.restored) {
+      setError(response.error ?? "Could not restore cloud backup.");
+      return false;
+    }
+
+    resetCollapsedMessages();
+    setMessageUndoHistory({});
+    setNotebookUndoHistory({});
+    setLastDeletedMessage(null);
+    setIsMergingMessages(false);
+    setSelectedMergeMessageIds(new Set());
+    setSelectedThreadId(null);
+    setIsNotebookOpen(false);
+    await loadMessages(null);
+    await Promise.all([
+      loadThreads(),
+      loadFolders(),
+      loadAiOperationProposals(),
+      loadAutosaveStatus(),
+      loadCloudBackupStatus(),
+    ]);
+    setStatus(successMessage);
+    return true;
   }
 
   async function selectThread(threadId: string) {
@@ -1938,7 +1983,7 @@ function CloudBackupControls({
         type="button"
         title="Restore latest cloud backup"
         aria-label="Restore latest cloud backup"
-        disabled={!status.latestBackupId || !status.lastCloudBackupAt}
+        disabled={!status.latestBackupId}
         onClick={onRestoreLatest}
       >
         <CloudDownload size={15} aria-hidden="true" />
