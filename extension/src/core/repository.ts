@@ -58,6 +58,13 @@ export type NotebookAutosaveMetadata = {
   lastDailyBackupDate: string | null;
 };
 
+export type NotebookCloudBackupMetadata = {
+  dataRevision: number;
+  lastCloudBackupRevision: number;
+  lastCloudBackupAt: string | null;
+  lastCloudBackupError: string | null;
+};
+
 export type StoredNotebookBackupInput = Omit<StoredNotebookBackup, "createdAt" | "updatedAt">;
 
 export async function getAiOperationProposals(): Promise<AiOperationProposal[]> {
@@ -118,6 +125,22 @@ export async function getNotebookAutosaveMetadata(): Promise<NotebookAutosaveMet
   };
 }
 
+export async function getNotebookCloudBackupMetadata(): Promise<NotebookCloudBackupMetadata> {
+  const settings = await notesDb.settings.bulkGet([
+    "dataRevision",
+    "lastCloudBackupRevision",
+    "lastCloudBackupAt",
+    "lastCloudBackupError",
+  ]);
+
+  return {
+    dataRevision: toSettingNumber(settings[0]?.value),
+    lastCloudBackupRevision: toSettingNumber(settings[1]?.value),
+    lastCloudBackupAt: settings[2]?.value ?? null,
+    lastCloudBackupError: settings[3]?.value ?? null,
+  };
+}
+
 export async function markNotebookBackupSucceeded(input: {
   revision: number;
   backedUpAt: string;
@@ -147,12 +170,51 @@ export async function markNotebookBackupSucceeded(input: {
   });
 }
 
+export async function markCloudBackupSucceeded(input: {
+  revision: number;
+  backedUpAt: string;
+}): Promise<void> {
+  const timestamp = Date.now();
+
+  await notesDb.transaction("rw", notesDb.settings, async () => {
+    await notesDb.settings.bulkPut([
+      {
+        key: "lastCloudBackupRevision",
+        value: String(input.revision),
+        updatedAt: timestamp,
+      },
+      {
+        key: "lastCloudBackupAt",
+        value: input.backedUpAt,
+        updatedAt: timestamp,
+      },
+    ]);
+    await notesDb.settings.delete("lastCloudBackupError");
+  });
+}
+
 export async function markNotebookBackupFailed(error: string): Promise<void> {
   await notesDb.settings.put({
     key: "lastBackupError",
     value: error,
     updatedAt: Date.now(),
   });
+}
+
+export async function markCloudBackupFailed(error: string): Promise<void> {
+  await notesDb.settings.put({
+    key: "lastCloudBackupError",
+    value: error,
+    updatedAt: Date.now(),
+  });
+}
+
+export async function clearCloudBackupMetadata(): Promise<void> {
+  await notesDb.settings.bulkDelete([
+    "lastCloudBackupRevision",
+    "lastCloudBackupAt",
+    "lastCloudBackupError",
+  ]);
 }
 
 export async function saveStoredNotebookBackup(input: StoredNotebookBackupInput): Promise<StoredNotebookBackup> {

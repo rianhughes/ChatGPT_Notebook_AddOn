@@ -3,20 +3,25 @@
   "name": "ChatGPT Notebook",
   "version": "0.1.0",
   "icons": {
-    "16": "icon.png",
-    "32": "icon.png",
-    "48": "icon.png",
-    "128": "icon.png"
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
   },
-  "permissions": ["storage", "tabs", "clipboardWrite", "downloads"],
-  "host_permissions": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://deepwiki.com/*"],
+  "permissions": ["storage", "tabs", "clipboardWrite", "downloads", "identity"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://deepwiki.com/*",
+    "https://*.supabase.co/*"
+  ],
   "background": {
     "scripts": ["background.js"]
   },
   "sidebar_action": {
     "default_title": "ChatGPT Notebook",
     "default_panel": "sidebar.html",
-    "default_icon": "icon.png"
+    "default_icon": "icon-32.png"
   },
   "content_scripts": [
     {
@@ -27,7 +32,7 @@
   ],
   "action": {
     "default_title": "Open ChatGPT Notebook",
-    "default_icon": "icon.png"
+    "default_icon": "icon-32.png"
   },
   "web_accessible_resources": [
     {
@@ -39,7 +44,8 @@
     "gecko": {
       "id": "@chatgpt-notebook.rianhughes",
       "data_collection_permissions": {
-        "required": ["none"]
+        "required": ["none"],
+        "optional": ["authenticationInfo", "personallyIdentifyingInfo", "personalCommunications", "websiteContent"]
       }
     }
   }

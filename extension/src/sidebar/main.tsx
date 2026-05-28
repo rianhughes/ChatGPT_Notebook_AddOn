@@ -5,12 +5,17 @@ import {
   Check,
   ChevronDown,
   Clock,
+  Cloud,
+  CloudDownload,
   ListCollapse,
+  LogIn,
+  LogOut,
   Moon,
   Plus,
   RefreshCw,
   Sun,
   Sunset,
+  Trash2,
   TriangleAlert,
   UnfoldVertical,
 } from "lucide-react";
@@ -23,8 +28,11 @@ import type {
   ActiveChatGptContextResponse,
   ActiveSaveTargetResponse,
   AutosaveStatusResponse,
+  CloudBackupStatusResponse,
+  DeleteCloudBackupsResponse,
   InsertTextInChatGptResponse,
   OpenSidebarWindowResponse,
+  RestoreCloudBackupResponse,
 } from "../core/ports";
 import { getMessageCopyText } from "../core/clipboard";
 import { contentHashFromParts, createId } from "../core/hash";
@@ -142,6 +150,7 @@ function App() {
   const [isNotebookToolsOpen, setIsNotebookToolsOpen] = useState(false);
   const [aiOperationProposals, setAiOperationProposals] = useState<AiOperationProposal[]>([]);
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatusResponse | null>(null);
+  const [cloudBackupStatus, setCloudBackupStatus] = useState<CloudBackupStatusResponse | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
@@ -202,6 +211,20 @@ function App() {
     }
   }, []);
 
+  const loadCloudBackupStatus = useCallback(async () => {
+    try {
+      const nextStatus = await sendRuntimeMessage<CloudBackupStatusResponse>({
+        type: "GET_CLOUD_BACKUP_STATUS",
+        payload: {},
+      });
+
+      setCloudBackupStatus(nextStatus);
+      return nextStatus;
+    } catch {
+      return null;
+    }
+  }, []);
+
   const notifyNotebookDataChanged = useCallback(
     async (reason: string) => {
       try {
@@ -243,6 +266,59 @@ function App() {
     }
   }, []);
 
+  const startCloudSignIn = useCallback(async () => {
+    setError("");
+    setStatus("");
+
+    try {
+      const nextStatus = await sendRuntimeMessage<CloudBackupStatusResponse>({
+        type: "START_GOOGLE_SIGN_IN",
+        payload: {},
+      });
+
+      setCloudBackupStatus(nextStatus);
+      setStatus("Signed in to cloud backup.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not sign in with Google.");
+      void loadCloudBackupStatus();
+    }
+  }, [loadCloudBackupStatus]);
+
+  const signOutCloudBackup = useCallback(async () => {
+    setError("");
+    setStatus("");
+
+    try {
+      const nextStatus = await sendRuntimeMessage<CloudBackupStatusResponse>({
+        type: "SIGN_OUT_CLOUD",
+        payload: {},
+      });
+
+      setCloudBackupStatus(nextStatus);
+      setStatus("Signed out of cloud backup.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not sign out of cloud backup.");
+      void loadCloudBackupStatus();
+    }
+  }, [loadCloudBackupStatus]);
+
+  const forceCloudBackup = useCallback(async () => {
+    setError("");
+    setStatus("");
+
+    try {
+      const nextStatus = await sendRuntimeMessage<CloudBackupStatusResponse>({
+        type: "FORCE_CLOUD_BACKUP",
+        payload: {},
+      });
+
+      setCloudBackupStatus(nextStatus);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not start cloud backup.");
+      void loadCloudBackupStatus();
+    }
+  }, [loadCloudBackupStatus]);
+
   const loadMessages = useCallback(async (threadId: string | null) => {
     if (!threadId) {
       setMessages([]);
@@ -262,9 +338,105 @@ function App() {
     return URL.createObjectURL(asset.blob);
   }, []);
 
+  const restoreLatestCloudBackup = useCallback(async () => {
+    setError("");
+    setStatus("");
+
+    const backupId = cloudBackupStatus?.latestBackupId;
+
+    if (!backupId) {
+      setError("No cloud backup is available to restore.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Restore the latest cloud backup and merge it into the current notebooks, folders, notes, pending ChatGPT changes, and images?",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await sendRuntimeMessage<RestoreCloudBackupResponse>({
+        type: "RESTORE_CLOUD_BACKUP",
+        payload: { backupId },
+      });
+
+      if (!response.restored) {
+        setError(response.error ?? "Could not restore cloud backup.");
+        return;
+      }
+
+      resetCollapsedMessages();
+      setMessageUndoHistory({});
+      setNotebookUndoHistory({});
+      setLastDeletedMessage(null);
+      setIsMergingMessages(false);
+      setSelectedMergeMessageIds(new Set());
+      setSelectedThreadId(null);
+      setIsNotebookOpen(false);
+      await loadMessages(null);
+      await Promise.all([
+        loadThreads(),
+        loadFolders(),
+        loadAiOperationProposals(),
+        loadAutosaveStatus(),
+        loadCloudBackupStatus(),
+      ]);
+      setStatus("Cloud backup restored.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not restore cloud backup.");
+      void loadCloudBackupStatus();
+    }
+  }, [
+    cloudBackupStatus?.latestBackupId,
+    loadAiOperationProposals,
+    loadAutosaveStatus,
+    loadCloudBackupStatus,
+    loadFolders,
+    loadMessages,
+    loadThreads,
+  ]);
+
+  const deleteAllCloudBackups = useCallback(async () => {
+    setError("");
+    setStatus("");
+
+    const confirmed = window.confirm("Delete all cloud backups for the signed-in Google account?");
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await sendRuntimeMessage<DeleteCloudBackupsResponse>({
+        type: "DELETE_CLOUD_BACKUPS",
+        payload: {},
+      });
+
+      if (!response.deleted) {
+        setError(response.error ?? "Could not delete cloud backups.");
+        return;
+      }
+
+      await loadCloudBackupStatus();
+      setStatus("Cloud backups deleted.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not delete cloud backups.");
+      void loadCloudBackupStatus();
+    }
+  }, [loadCloudBackupStatus]);
+
   useEffect(() => {
     void (async () => {
-      await Promise.all([loadThreads(), loadFolders(), loadAiOperationProposals(), loadAutosaveStatus()]);
+      await Promise.all([
+        loadThreads(),
+        loadFolders(),
+        loadAiOperationProposals(),
+        loadAutosaveStatus(),
+        loadCloudBackupStatus(),
+      ]);
 
       const activeSaveTargetMessage = await getActiveSaveTargetMessage();
       setExportTargetMessageId(activeSaveTargetMessage?.id ?? null);
@@ -306,7 +478,7 @@ function App() {
 
       setSelectedThreadId(null);
     })();
-  }, [loadAiOperationProposals, loadAutosaveStatus, loadFolders, loadThreads]);
+  }, [loadAiOperationProposals, loadAutosaveStatus, loadCloudBackupStatus, loadFolders, loadThreads]);
 
   useEffect(() => {
     setSelectedMergeMessageIds((current) => {
@@ -370,6 +542,7 @@ function App() {
       void loadFolders();
       void loadAiOperationProposals();
       void loadAutosaveStatus();
+      void loadCloudBackupStatus();
 
       if (isNotebookDetailVisible) {
         void loadMessages(selectedThreadId);
@@ -381,6 +554,7 @@ function App() {
     isNotebookDetailVisible,
     loadAiOperationProposals,
     loadAutosaveStatus,
+    loadCloudBackupStatus,
     loadFolders,
     loadMessages,
     loadThreads,
@@ -1429,6 +1603,39 @@ function App() {
   const autosaveFeedback = autosaveStatus ? (
     <AutosaveStatusIndicator status={autosaveStatus} onForceAutosave={() => void forceAutosave()} />
   ) : null;
+  const cloudBackupControl = cloudBackupStatus ? (
+    <CloudBackupControls
+      status={cloudBackupStatus}
+      onSignOut={() => void signOutCloudBackup()}
+      onBackupNow={() => void forceCloudBackup()}
+      onRestoreLatest={() => void restoreLatestCloudBackup()}
+      onDeleteAll={() => void deleteAllCloudBackups()}
+    />
+  ) : null;
+  const cloudAccountControl =
+    cloudBackupStatus?.configured && cloudBackupStatus.signedIn ? (
+      <button
+        className="tool-button secondary thread-panel-cloud-account-button"
+        type="button"
+        title={`Signed in as ${getCloudAccountLabel(cloudBackupStatus)}. Click to sign out.`}
+        aria-label={`Signed in as ${getCloudAccountLabel(cloudBackupStatus)}. Click to sign out.`}
+        onClick={() => void signOutCloudBackup()}
+      >
+        <Cloud size={16} aria-hidden="true" />
+        <span className="thread-panel-cloud-account-text">{getCloudAccountLabel(cloudBackupStatus)}</span>
+      </button>
+    ) : cloudBackupStatus?.configured && !cloudBackupStatus.signedIn ? (
+      <button
+        className="tool-button secondary thread-panel-cloud-sign-in-button"
+        type="button"
+        title="Sign in with Google"
+        aria-label="Sign in with Google"
+        onClick={() => void startCloudSignIn()}
+      >
+        <LogIn size={16} aria-hidden="true" />
+        Sign in
+      </button>
+    ) : null;
   const noteCollapseToggleLabel = areAllVisibleMessagesCollapsed ? "Expand notes" : "Collapse notes";
 
   return (
@@ -1566,6 +1773,8 @@ function App() {
             newFolderTitle={newFolderTitle}
             themeToggle={themeToggle}
             autosaveControl={autosaveFeedback}
+            cloudAccountControl={cloudAccountControl}
+            cloudBackupControl={cloudBackupControl}
             selectedThreadId={selectedThreadId}
             isFullPage
             onFilterChange={setThreadFilter}
@@ -1616,6 +1825,145 @@ function getAutosaveStatusText(status: AutosaveStatusResponse): string {
   }
 
   return "Saved locally";
+}
+
+function getCloudBackupStatusText(status: CloudBackupStatusResponse): string {
+  if (!status.configured) {
+    return "Cloud not configured";
+  }
+
+  if (!status.signedIn) {
+    return "Cloud signed out";
+  }
+
+  if (status.state === "uploading") {
+    return "Uploading cloud backup";
+  }
+
+  if (status.state === "pending") {
+    return "Cloud backup pending";
+  }
+
+  if (status.state === "error") {
+    return status.lastCloudBackupError ? `Cloud backup failed: ${status.lastCloudBackupError}` : "Cloud backup failed";
+  }
+
+  if (status.lastCloudBackupAt) {
+    return `Cloud backup ${formatBackupTime(status.lastCloudBackupAt)}`;
+  }
+
+  return "Cloud backup ready";
+}
+
+function getCloudBackupTooltipText(status: CloudBackupStatusResponse): string {
+  if (!status.configured) {
+    return "Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY before building to enable cloud backup.";
+  }
+
+  if (!status.signedIn) {
+    return "Sign in with Google to push backups to Supabase.";
+  }
+
+  if (status.state === "uploading") {
+    return "Uploading the latest local backup to Supabase.";
+  }
+
+  if (status.state === "pending") {
+    return "Local changes are waiting for cloud backup.";
+  }
+
+  if (status.state === "error") {
+    return status.lastCloudBackupError
+      ? `The latest cloud backup failed: ${status.lastCloudBackupError}`
+      : "The latest cloud backup failed.";
+  }
+
+  if (status.lastCloudBackupAt) {
+    return `Latest cloud backup finished at ${formatBackupTime(status.lastCloudBackupAt)}.`;
+  }
+
+  return "Cloud backup is signed in and ready.";
+}
+
+function getCloudAccountLabel(status: CloudBackupStatusResponse): string {
+  return status.user?.email?.trim() || "Google account";
+}
+
+function CloudBackupControls({
+  status,
+  onSignOut,
+  onBackupNow,
+  onRestoreLatest,
+  onDeleteAll,
+}: {
+  status: CloudBackupStatusResponse;
+  onSignOut(): void;
+  onBackupNow(): void;
+  onRestoreLatest(): void;
+  onDeleteAll(): void;
+}) {
+  const label = getCloudBackupStatusText(status);
+  const tooltip = getCloudBackupTooltipText(status);
+  const accountLabel = getCloudAccountLabel(status);
+
+  if (!status.configured) {
+    return null;
+  }
+
+  if (!status.signedIn) {
+    return null;
+  }
+
+  return (
+    <>
+      <span className="cloud-backup-account" title={`Signed in as ${accountLabel}`}>
+        <Cloud size={15} aria-hidden="true" />
+        <span className="cloud-backup-account-label">Signed in as</span>
+        <span className="cloud-backup-account-email">{accountLabel}</span>
+      </span>
+      <button
+        className={`autosave-status cloud-backup-status is-${status.state}`}
+        type="button"
+        aria-label={`${tooltip} Click to back up to cloud now.`}
+        onClick={onBackupNow}
+      >
+        <Cloud size={15} aria-hidden="true" />
+        <span className="autosave-tooltip" role="tooltip">
+          <span className="autosave-tooltip-title">{label}</span>
+          <span className="autosave-tooltip-body">{tooltip} Click to back up to cloud now.</span>
+        </span>
+      </button>
+      <button
+        className="icon-button cloud-backup-restore-button"
+        type="button"
+        title="Restore latest cloud backup"
+        aria-label="Restore latest cloud backup"
+        disabled={!status.latestBackupId || !status.lastCloudBackupAt}
+        onClick={onRestoreLatest}
+      >
+        <CloudDownload size={15} aria-hidden="true" />
+      </button>
+      <button
+        className="icon-button cloud-backup-sign-out-button"
+        type="button"
+        title="Sign out of cloud backup"
+        aria-label="Sign out of cloud backup"
+        onClick={onSignOut}
+      >
+        <LogOut size={15} aria-hidden="true" />
+      </button>
+      <button
+        className="icon-button cloud-backup-delete-button"
+        type="button"
+        title="Delete cloud backups"
+        aria-label="Delete cloud backups"
+        disabled={!status.lastCloudBackupAt}
+        onClick={onDeleteAll}
+      >
+        <Trash2 size={15} aria-hidden="true" />
+      </button>
+    </>
+  );
 }
 
 function getAutosaveTooltipText(status: AutosaveStatusResponse): string {

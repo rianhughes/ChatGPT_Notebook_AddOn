@@ -60,7 +60,10 @@ export type AppSettingKey =
   | "lastBackupRevision"
   | "lastBackupAt"
   | "lastBackupError"
-  | "lastDailyBackupDate";
+  | "lastDailyBackupDate"
+  | "lastCloudBackupRevision"
+  | "lastCloudBackupAt"
+  | "lastCloudBackupError";
 
 export type AppSetting = {
   key: AppSettingKey;

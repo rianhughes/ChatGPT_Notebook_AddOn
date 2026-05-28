@@ -155,4 +155,4 @@ Also confirm each screenshot is from a clean browser profile and does not show
 private ChatGPT conversations, account details, local file paths, or other
 personal data.
 
-Use `extension/src/assets/icon.png` for the 128px store icon unless you decide to create separate store artwork.
+Use `extension/src/assets/icon-128.png` for the 128px store icon unless you decide to create separate store artwork.

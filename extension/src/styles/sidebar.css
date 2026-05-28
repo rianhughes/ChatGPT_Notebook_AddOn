@@ -371,6 +371,26 @@ button {
   gap: 6px;
 }
 
+.thread-panel-cloud-sign-in-button {
+  min-height: 34px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.thread-panel-cloud-account-button {
+  max-width: min(240px, 35vw);
+  min-height: 34px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 10px;
+}
+
+.thread-panel-cloud-account-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .thread-panel-tools {
   display: grid;
   grid-row: 2;
@@ -392,11 +412,61 @@ button {
 }
 
 .notebook-tools-action-row {
+  grid-column: 1 / -1;
   display: flex;
   min-width: max-content;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.notebook-cloud-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.cloud-backup-account {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 34px;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--color-surface-muted);
+  color: var(--color-control-text);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.cloud-backup-account-label {
+  color: var(--color-muted);
+}
+
+.cloud-backup-account-email {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notebook-cloud-action-row .icon-button {
+  width: auto;
+  min-width: 34px;
+  height: 34px;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
 }
 
 .notebook-tools-action-row .icon-button {
@@ -824,9 +894,19 @@ button {
   color: var(--color-accent);
 }
 
+.autosave-status.is-uploading {
+  border-color: var(--color-accent);
+  background: var(--color-hover);
+  color: var(--color-accent);
+}
+
 .autosave-status.is-error {
   border-color: var(--color-error);
   color: var(--color-error);
+}
+
+.cloud-backup-status.is-disabled {
+  cursor: not-allowed;
 }
 
 .autosave-status:focus-visible {
@@ -863,13 +943,18 @@ button {
 }
 
 .notebook-tools-action-row .autosave-tooltip {
-  top: calc(100% + 8px);
-  bottom: auto;
+  top: auto;
+  right: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
 }
 
 .autosave-status:hover .autosave-tooltip,
 .autosave-status:focus-visible .autosave-tooltip,
-.autosave-status:focus .autosave-tooltip {
+.autosave-status:focus .autosave-tooltip,
+.cloud-backup-wrapper:hover .autosave-tooltip,
+.cloud-backup-wrapper:focus-visible .autosave-tooltip,
+.cloud-backup-wrapper:focus .autosave-tooltip {
   display: grid;
   gap: 3px;
 }
@@ -1877,4 +1962,5 @@ button {
 .error-text {
   color: var(--color-error);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }

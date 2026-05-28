@@ -33,6 +33,8 @@ type ThreadListProps = {
   newFolderTitle: string;
   themeToggle: ReactNode;
   autosaveControl?: ReactNode;
+  cloudAccountControl?: ReactNode;
+  cloudBackupControl?: ReactNode;
   selectedThreadId: string | null;
   isFullPage?: boolean;
   onFilterChange(filter: string): void;
@@ -60,6 +62,8 @@ export function ThreadList({
   newFolderTitle,
   themeToggle,
   autosaveControl,
+  cloudAccountControl,
+  cloudBackupControl,
   selectedThreadId,
   isFullPage = false,
   onFilterChange,
@@ -868,6 +872,7 @@ export function ThreadList({
               </button>
             </>
           ) : null}
+          {cloudAccountControl}
           {themeToggle}
         </div>
       </div>
@@ -935,8 +940,13 @@ export function ThreadList({
                   </button>
                 </form>
               ) : null}
+              {backupToolsOpen && cloudBackupControl ? (
+                <div className="notebook-cloud-action-row" aria-label="Cloud backup tools">
+                  {cloudBackupControl}
+                </div>
+              ) : null}
               {backupToolsOpen ? (
-                <div className="notebook-tools-action-row" aria-label="Notebook backup tools">
+                <div className="notebook-tools-action-row" aria-label="Local backup tools">
                   {autosaveControl}
                   <button
                     className="icon-button backup-export-button"

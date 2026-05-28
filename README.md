@@ -61,6 +61,23 @@ The full backup downloads a `chatgpt-notes-backup-YYYY-MM-DD.json` file. It incl
 
 The extension also writes automatic local backups after notebook data changes. Changes are saved to IndexedDB immediately, then a background backup runs after a short quiet period. Automatic backups are written to `ChatGPT Notebook Backups/` in the browser downloads folder as `chatgpt-notes-autobackup-latest.json` plus one daily snapshot. Daily snapshots older than seven days are cleaned up after successful backups.
 
+## Optional Supabase Cloud Backup
+
+Cloud backup is optional and requires building the extension with Supabase settings:
+
+```text
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-public-anon-or-publishable-key
+VITE_SUPABASE_BACKUP_BUCKET=notebook-backups
+VITE_SUPABASE_BACKUP_TABLE=cloud_backups
+```
+
+Run `supabase/cloud-backup-schema.sql` in the Supabase SQL editor, create a private Storage bucket named `notebook-backups`, set the bucket file-size limit to 10 MB, and allow `application/json`, `image/png`, `image/jpeg`, `image/webp`, and `image/gif`.
+
+The extension uses Google sign-in through Supabase Auth. Add the browser identity redirect URL to the Supabase Auth redirect allow list. For Chrome this is based on the installed extension ID and uses the `https://<extension-id>.chromiumapp.org/supabase` shape; Firefox uses the WebExtensions identity redirect URL for the add-on ID.
+
+Cloud backups store JSON snapshots separately from image files. Images stay capped at 5 MB in the extension. Cloud object paths are scoped under the Supabase user ID, and the included RLS policies restrict backup metadata and files to the signed-in user.
+
 ## Browser Support
 
 Firefox is the primary supported browser. Chrome support is available through the unpacked development build and requires Chrome 116 or newer.

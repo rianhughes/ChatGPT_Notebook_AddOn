@@ -1,4 +1,5 @@
 import type { ChatGptContext } from "./threadIdentity";
+import type { CloudBackupListItem } from "./cloudBackup";
 import type {
   AiOperationPackage,
   ChatGptThread,
@@ -22,7 +23,14 @@ export type RuntimeMessageType =
   | "REQUEST_SAVED_STATE_FOR_VISIBLE_MESSAGES"
   | "NOTEBOOK_DATA_CHANGED"
   | "GET_AUTOSAVE_STATUS"
-  | "FORCE_AUTOSAVE";
+  | "FORCE_AUTOSAVE"
+  | "GET_CLOUD_BACKUP_STATUS"
+  | "START_GOOGLE_SIGN_IN"
+  | "SIGN_OUT_CLOUD"
+  | "FORCE_CLOUD_BACKUP"
+  | "LIST_CLOUD_BACKUPS"
+  | "RESTORE_CLOUD_BACKUP"
+  | "DELETE_CLOUD_BACKUPS";
 
 export type ChatGptThreadChangedMessage = {
   type: "CHATGPT_THREAD_CHANGED";
@@ -116,6 +124,41 @@ export type ForceAutosaveMessage = {
   payload: Record<string, never>;
 };
 
+export type GetCloudBackupStatusMessage = {
+  type: "GET_CLOUD_BACKUP_STATUS";
+  payload: Record<string, never>;
+};
+
+export type StartGoogleSignInMessage = {
+  type: "START_GOOGLE_SIGN_IN";
+  payload: Record<string, never>;
+};
+
+export type SignOutCloudMessage = {
+  type: "SIGN_OUT_CLOUD";
+  payload: Record<string, never>;
+};
+
+export type ForceCloudBackupMessage = {
+  type: "FORCE_CLOUD_BACKUP";
+  payload: Record<string, never>;
+};
+
+export type ListCloudBackupsMessage = {
+  type: "LIST_CLOUD_BACKUPS";
+  payload: Record<string, never>;
+};
+
+export type RestoreCloudBackupMessage = {
+  type: "RESTORE_CLOUD_BACKUP";
+  payload: { backupId: string };
+};
+
+export type DeleteCloudBackupsMessage = {
+  type: "DELETE_CLOUD_BACKUPS";
+  payload: Record<string, never>;
+};
+
 export type ExtensionMessage =
   | ChatGptThreadChangedMessage
   | SaveChatGptMessage
@@ -131,7 +174,14 @@ export type ExtensionMessage =
   | RequestSavedStateForVisibleMessagesMessage
   | NotebookDataChangedMessage
   | GetAutosaveStatusMessage
-  | ForceAutosaveMessage;
+  | ForceAutosaveMessage
+  | GetCloudBackupStatusMessage
+  | StartGoogleSignInMessage
+  | SignOutCloudMessage
+  | ForceCloudBackupMessage
+  | ListCloudBackupsMessage
+  | RestoreCloudBackupMessage
+  | DeleteCloudBackupsMessage;
 
 export type SaveChatGptMessageResponse = {
   sourceThreadId: string;
@@ -170,6 +220,47 @@ export type AutosaveStatusResponse = {
   lastBackupRevision: number;
   lastBackupAt: string | null;
   lastBackupError: string | null;
+};
+
+export type CloudBackupStatusState = "disabled" | "signed_out" | "idle" | "pending" | "uploading" | "error";
+
+export type CloudBackupStatusResponse = {
+  configured: boolean;
+  signedIn: boolean;
+  state: CloudBackupStatusState;
+  user: {
+    id: string;
+    email: string | null;
+  } | null;
+  dataRevision: number;
+  lastCloudBackupRevision: number;
+  lastCloudBackupAt: string | null;
+  lastCloudBackupError: string | null;
+  latestBackupId: string | null;
+};
+
+export type CloudBackupListResponse = {
+  backups: CloudBackupListItem[];
+};
+
+export type RestoreCloudBackupResponse = {
+  restored: boolean;
+  backupId?: string;
+  counts?: {
+    folders: number;
+    threads: number;
+    messages: number;
+    settings: number;
+    aiOperationProposals: number;
+    assets: number;
+  };
+  error?: string;
+};
+
+export type DeleteCloudBackupsResponse = {
+  deleted: boolean;
+  objectsDeleted?: number;
+  error?: string;
 };
 
 export function isExtensionMessage(value: unknown): value is ExtensionMessage {
@@ -233,6 +324,20 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
     case "GET_AUTOSAVE_STATUS":
       return true;
     case "FORCE_AUTOSAVE":
+      return true;
+    case "GET_CLOUD_BACKUP_STATUS":
+      return true;
+    case "START_GOOGLE_SIGN_IN":
+      return true;
+    case "SIGN_OUT_CLOUD":
+      return true;
+    case "FORCE_CLOUD_BACKUP":
+      return true;
+    case "LIST_CLOUD_BACKUPS":
+      return true;
+    case "RESTORE_CLOUD_BACKUP":
+      return typeof value.payload.backupId === "string";
+    case "DELETE_CLOUD_BACKUPS":
       return true;
     default:
       return false;

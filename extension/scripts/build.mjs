@@ -1,5 +1,5 @@
 import react from "@vitejs/plugin-react";
-import { build } from "vite";
+import { build, loadEnv } from "vite";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -12,8 +12,14 @@ if (!supportedTargets.has(target)) {
 }
 
 const outDir = resolve(projectRoot, "dist", target);
+const viteEnv = loadEnv(process.env.MODE ?? "production", projectRoot, "");
+const getEnv = (key) => process.env[key] ?? viteEnv[key] ?? "";
 const define = {
   __BROWSER_TARGET__: JSON.stringify(target),
+  "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(getEnv("VITE_SUPABASE_URL")),
+  "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(getEnv("VITE_SUPABASE_ANON_KEY")),
+  "import.meta.env.VITE_SUPABASE_BACKUP_BUCKET": JSON.stringify(getEnv("VITE_SUPABASE_BACKUP_BUCKET")),
+  "import.meta.env.VITE_SUPABASE_BACKUP_TABLE": JSON.stringify(getEnv("VITE_SUPABASE_BACKUP_TABLE")),
 };
 
 rmSync(outDir, { recursive: true, force: true });

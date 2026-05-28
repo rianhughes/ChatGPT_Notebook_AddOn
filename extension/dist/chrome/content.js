@@ -1026,6 +1026,20 @@
         return true;
       case "FORCE_AUTOSAVE":
         return true;
+      case "GET_CLOUD_BACKUP_STATUS":
+        return true;
+      case "START_GOOGLE_SIGN_IN":
+        return true;
+      case "SIGN_OUT_CLOUD":
+        return true;
+      case "FORCE_CLOUD_BACKUP":
+        return true;
+      case "LIST_CLOUD_BACKUPS":
+        return true;
+      case "RESTORE_CLOUD_BACKUP":
+        return typeof value.payload.backupId === "string";
+      case "DELETE_CLOUD_BACKUPS":
+        return true;
       default:
         return false;
     }

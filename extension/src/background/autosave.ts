@@ -9,6 +9,7 @@ import {
   recordNotebookDataMutation,
   saveStoredNotebookBackup,
 } from "../core/repository";
+import { queueCloudBackup } from "./cloudBackup";
 import { writeBackupFilesToDownloads } from "./downloadBackup";
 
 const AUTOSAVE_DELAY_MS = 1_500;
@@ -116,6 +117,7 @@ async function flushAutosave(): Promise<void> {
       backedUpAt: backupData.exportedAt,
       dailyBackupDate: backupDate,
     });
+    void queueCloudBackup().catch(() => undefined);
     transientState = null;
   } catch (error) {
     transientState = "error";

@@ -9,8 +9,12 @@ import {
 import {
   type ExtensionMessage,
   type AutosaveStatusResponse,
+  type CloudBackupListResponse,
+  type CloudBackupStatusResponse,
+  type DeleteCloudBackupsResponse,
   type InsertTextInChatGptResponse,
   type OpenSidebarWindowResponse,
+  type RestoreCloudBackupResponse,
   type SaveChatGptMessageResponse,
   type SubmitAiOperationPackageResponse,
   isExtensionMessage,
@@ -24,6 +28,14 @@ import {
 } from "../core/repository";
 import { createSidebarAdapter } from "./sidebarAdapter";
 import { forceNotebookAutosave, getAutosaveStatus, noteNotebookDataChanged } from "./autosave";
+import {
+  forceCloudBackup,
+  getCloudBackupStatus,
+  deleteCloudBackups,
+  listCloudBackups,
+  restoreCloudBackup,
+} from "./cloudBackup";
+import { signOutCloud, startGoogleSignIn } from "./cloudAuth";
 import { initializeDetachedSidebarWindowTracking, openDetachedSidebarWindow } from "./sidebarWindow";
 
 type ActionClickTab = {
@@ -155,6 +167,27 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       return getAutosaveStatus() satisfies Promise<AutosaveStatusResponse>;
     case "FORCE_AUTOSAVE":
       return forceNotebookAutosave() satisfies Promise<AutosaveStatusResponse>;
+    case "GET_CLOUD_BACKUP_STATUS":
+      return getCloudBackupStatus() satisfies Promise<CloudBackupStatusResponse>;
+    case "START_GOOGLE_SIGN_IN":
+      return startGoogleSignIn() satisfies Promise<CloudBackupStatusResponse>;
+    case "SIGN_OUT_CLOUD":
+      return signOutCloud() satisfies Promise<CloudBackupStatusResponse>;
+    case "FORCE_CLOUD_BACKUP":
+      return forceCloudBackup() satisfies Promise<CloudBackupStatusResponse>;
+    case "LIST_CLOUD_BACKUPS":
+      return listCloudBackups() satisfies Promise<CloudBackupListResponse>;
+    case "RESTORE_CLOUD_BACKUP": {
+      const response = await restoreCloudBackup(message.payload.backupId);
+
+      if (response.restored) {
+        await noteNotebookDataChanged();
+      }
+
+      return response satisfies RestoreCloudBackupResponse;
+    }
+    case "DELETE_CLOUD_BACKUPS":
+      return deleteCloudBackups() satisfies Promise<DeleteCloudBackupsResponse>;
     case "CHATGPT_THREAD_CHANGED":
     case "SAVE_CHATGPT_MESSAGE_RESULT":
     case "ACTIVE_SAVE_TARGET_CHANGED":

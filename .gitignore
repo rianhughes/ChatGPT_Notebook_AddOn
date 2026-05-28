@@ -1,0 +1,20 @@
+# Local environment files
+.env
+.env.*
+!.env.example
+extension/.env
+extension/.env.*
+!extension/.env.example
+
+# Dependencies and local caches
+node_modules/
+extension/node_modules/
+.vite/
+extension/.vite/
+coverage/
+extension/coverage/
+
+# OS/editor noise
+.DS_Store
+*.swp
+
