@@ -152,6 +152,7 @@ function App() {
   const [aiOperationProposals, setAiOperationProposals] = useState<AiOperationProposal[]>([]);
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatusResponse | null>(null);
   const [cloudBackupStatus, setCloudBackupStatus] = useState<CloudBackupStatusResponse | null>(null);
+  const [cloudRestoreInProgress, setCloudRestoreInProgress] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
@@ -363,6 +364,7 @@ function App() {
     }
 
     try {
+      setStatus("Restoring cloud backup to this device.");
       await restoreCloudBackupToDevice(backupId, "Cloud backup restored.");
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not restore cloud backup.");
@@ -582,34 +584,41 @@ function App() {
   }
 
   async function restoreCloudBackupToDevice(backupId: string, successMessage: string): Promise<boolean> {
-    const response = await sendRuntimeMessage<RestoreCloudBackupResponse>({
-      type: "RESTORE_CLOUD_BACKUP",
-      payload: { backupId },
-    });
+    setCloudRestoreInProgress(true);
+    setStatus("Restoring cloud backup to this device.");
 
-    if (!response.restored) {
-      setError(response.error ?? "Could not restore cloud backup.");
-      return false;
+    try {
+      const response = await sendRuntimeMessage<RestoreCloudBackupResponse>({
+        type: "RESTORE_CLOUD_BACKUP",
+        payload: { backupId },
+      });
+
+      if (!response.restored) {
+        setError(response.error ?? "Could not restore cloud backup.");
+        return false;
+      }
+
+      resetCollapsedMessages();
+      setMessageUndoHistory({});
+      setNotebookUndoHistory({});
+      setLastDeletedMessage(null);
+      setIsMergingMessages(false);
+      setSelectedMergeMessageIds(new Set());
+      setSelectedThreadId(null);
+      setIsNotebookOpen(false);
+      await loadMessages(null);
+      await Promise.all([
+        loadThreads(),
+        loadFolders(),
+        loadAiOperationProposals(),
+        loadAutosaveStatus(),
+        loadCloudBackupStatus(),
+      ]);
+      setStatus(successMessage);
+      return true;
+    } finally {
+      setCloudRestoreInProgress(false);
     }
-
-    resetCollapsedMessages();
-    setMessageUndoHistory({});
-    setNotebookUndoHistory({});
-    setLastDeletedMessage(null);
-    setIsMergingMessages(false);
-    setSelectedMergeMessageIds(new Set());
-    setSelectedThreadId(null);
-    setIsNotebookOpen(false);
-    await loadMessages(null);
-    await Promise.all([
-      loadThreads(),
-      loadFolders(),
-      loadAiOperationProposals(),
-      loadAutosaveStatus(),
-      loadCloudBackupStatus(),
-    ]);
-    setStatus(successMessage);
-    return true;
   }
 
   async function selectThread(threadId: string) {
@@ -1651,6 +1660,7 @@ function App() {
   const cloudBackupControl = cloudBackupStatus ? (
     <CloudBackupControls
       status={cloudBackupStatus}
+      restoreInProgress={cloudRestoreInProgress}
       onSignOut={() => void signOutCloudBackup()}
       onBackupNow={() => void forceCloudBackup()}
       onRestoreLatest={() => void restoreLatestCloudBackup()}
@@ -1936,12 +1946,14 @@ function getCloudAccountLabel(status: CloudBackupStatusResponse): string {
 
 function CloudBackupControls({
   status,
+  restoreInProgress,
   onSignOut,
   onBackupNow,
   onRestoreLatest,
   onDeleteAll,
 }: {
   status: CloudBackupStatusResponse;
+  restoreInProgress: boolean;
   onSignOut(): void;
   onBackupNow(): void;
   onRestoreLatest(): void;
@@ -1966,6 +1978,12 @@ function CloudBackupControls({
         <span className="cloud-backup-account-label">Signed in as</span>
         <span className="cloud-backup-account-email">{accountLabel}</span>
       </span>
+      {restoreInProgress ? (
+        <span className="cloud-restore-status" role="status" aria-live="polite">
+          <RefreshCw className="cloud-restore-spinner" size={14} aria-hidden="true" />
+          Restoring notebook...
+        </span>
+      ) : null}
       <button
         className={`autosave-status cloud-backup-status is-${status.state}`}
         type="button"
@@ -1979,14 +1997,18 @@ function CloudBackupControls({
         </span>
       </button>
       <button
-        className="icon-button cloud-backup-restore-button"
+        className={`icon-button cloud-backup-restore-button${restoreInProgress ? " is-restoring" : ""}`}
         type="button"
-        title="Restore latest cloud backup"
-        aria-label="Restore latest cloud backup"
-        disabled={!status.latestBackupId}
+        title={restoreInProgress ? "Restoring latest cloud backup" : "Restore latest cloud backup"}
+        aria-label={restoreInProgress ? "Restoring latest cloud backup" : "Restore latest cloud backup"}
+        disabled={restoreInProgress || !status.latestBackupId}
         onClick={onRestoreLatest}
       >
-        <CloudDownload size={15} aria-hidden="true" />
+        {restoreInProgress ? (
+          <RefreshCw className="cloud-restore-spinner" size={15} aria-hidden="true" />
+        ) : (
+          <CloudDownload size={15} aria-hidden="true" />
+        )}
       </button>
       <button
         className="icon-button cloud-backup-sign-out-button"

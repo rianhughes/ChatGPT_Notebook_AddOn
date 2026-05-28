@@ -458,6 +458,32 @@ button {
   white-space: nowrap;
 }
 
+.cloud-restore-status {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  border-radius: 6px;
+  padding: 0 10px;
+  background: var(--color-hover);
+  color: var(--color-accent);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.cloud-restore-spinner {
+  animation: cloud-restore-spin 900ms linear infinite;
+}
+
+@keyframes cloud-restore-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .notebook-cloud-action-row .icon-button {
   width: auto;
   min-width: 34px;
