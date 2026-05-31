@@ -1,4 +1,5 @@
 import {
+  Bold,
   Heading2,
   ListCollapse,
   Pencil,
@@ -20,6 +21,7 @@ type MessageActionsProps = {
   canUndoMessageEdit: boolean;
   canUndoDeletedMessage: boolean;
   onToggleHeadings(message: SavedMessage): void;
+  onBoldSelection(message: SavedMessage): void;
   onInsertMessage(message: SavedMessage): void;
   onMakeSelectionHeading(message: SavedMessage): void;
   onUnmakeHeadingSection(message: SavedMessage): void;
@@ -38,6 +40,7 @@ export function MessageActions({
   canUndoMessageEdit,
   canUndoDeletedMessage,
   onToggleHeadings,
+  onBoldSelection,
   onInsertMessage,
   onMakeSelectionHeading,
   onUnmakeHeadingSection,
@@ -55,6 +58,7 @@ export function MessageActions({
     : hasHighlightedSelection
       ? "Make highlighted text a collapsible header"
       : "Highlight text to make a collapsible header";
+  const boldTitle = hasHighlightedSelection ? "Bold highlighted text" : "Highlight text to bold";
 
   return (
     <div className="message-actions">
@@ -115,6 +119,17 @@ export function MessageActions({
           ) : (
             <ListCollapse size={16} aria-hidden="true" />
           )}
+        </button>
+        <button
+          className={`icon-button message-bold-button${hasHighlightedSelection ? " has-highlighted-selection" : ""}`}
+          type="button"
+          title={boldTitle}
+          aria-label={boldTitle}
+          disabled={!hasHighlightedSelection}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onBoldSelection(message)}
+        >
+          <Bold size={16} aria-hidden="true" />
         </button>
         <button
           className={`icon-button message-heading-button${hasActiveHeadingSection ? " is-active" : ""}${

@@ -91,7 +91,7 @@ The extension also writes automatic local backups after notebook data changes. C
 
 ## Cloud Backup
 
-Cloud backup is optional. In the Firefox Add-ons build, sign in with Google from the Notebooks tab to back up notebook data to Supabase.
+Cloud backup is optional. In the Firefox Add-ons build, sign in with Google from the Notebooks tab, then enable encrypted cloud sync before uploading backups to Supabase.
 
 Cloud backup can store:
 
@@ -99,7 +99,9 @@ Cloud backup can store:
 - notebook names, folders, notes, metadata, and pending ChatGPT note operations;
 - image assets such as PNG, JPEG, WebP, and GIF files.
 
-When you sign in on a fresh browser/device with the same Google account, the extension looks for an existing cloud backup and restores it locally. You can also open the notebook tools row and click **Restore latest cloud backup** manually. During restore, the sidebar shows a restoring indicator so the import does not look stuck.
+Cloud snapshots and image assets are encrypted client-side with a per-account master key before upload. The extension stores only wrapped keys and ciphertext in Supabase.
+
+When you sign in on a fresh browser/device with the same Google account, unlock encrypted cloud sync with your passphrase or recovery phrase to restore backups. You can also open the notebook tools row and click **Restore latest cloud backup** manually. During restore, the sidebar shows a restoring indicator so the import does not look stuck.
 
 Cloud backups store JSON snapshots separately from image files. Images stay capped at 5 MB in the extension. Cloud object paths are scoped under the Supabase user ID, and the included RLS policies restrict backup metadata and files to the signed-in user.
 
@@ -112,9 +114,14 @@ VITE_SUPABASE_URL=https://your-project-ref.supabase.co
 VITE_SUPABASE_ANON_KEY=your-public-anon-or-publishable-key
 VITE_SUPABASE_BACKUP_BUCKET=notebook-backups
 VITE_SUPABASE_BACKUP_TABLE=cloud_backups
+VITE_SUPABASE_KEYRING_TABLE=cloud_keyrings
+# Optional rollout gate (default: enabled)
+VITE_ENCRYPTED_CLOUD_SYNC_V1=true
 ```
 
-Run `supabase/cloud-backup-schema.sql` in the Supabase SQL editor, create a private Storage bucket named `notebook-backups`, set the bucket file-size limit to 10 MB, and allow `application/json`, `image/png`, `image/jpeg`, `image/webp`, and `image/gif`.
+Set `VITE_ENCRYPTED_CLOUD_SYNC_V1=false` to disable encrypted cloud sync at build time for staged rollouts.
+
+Run `supabase/cloud-backup-schema.sql` in the Supabase SQL editor, create a private Storage bucket named `notebook-backups`, set the bucket file-size limit to 10 MB, and allow `application/octet-stream`, `application/json`, `image/png`, `image/jpeg`, `image/webp`, and `image/gif`.
 
 The extension uses Google sign-in through Supabase Auth. Add the browser identity redirect URL to the Supabase Auth redirect allow list:
 

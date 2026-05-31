@@ -32,9 +32,9 @@ Upload the Chrome zip to the Chrome Web Store dashboard. Upload the Firefox zip 
 ## Firefox 0.1.1 Release Notes
 
 ```text
-Adds optional Google sign-in for Supabase cloud backup and restore.
+Adds optional Google sign-in for encrypted Supabase cloud backup and restore.
 
-Users can back up notebook JSON, folders, notes, pending ChatGPT note operations, and image assets to the configured Supabase project, then restore the latest cloud backup on another browser/device. The Notebooks tab now shows the signed-in email address, and cloud restore displays an in-progress indicator while local notebooks are being restored.
+Users can enable encrypted cloud sync, then back up notebook JSON, folders, notes, pending ChatGPT note operations, and image assets to the configured Supabase project. Cloud payloads are encrypted on-device before upload and can be restored on another browser/device after unlock with passphrase or recovery phrase.
 
 This version adds the identity permission for Google sign-in and https://*.supabase.co/* host access for optional Supabase backup and restore. Local notebook use still works without signing in.
 ```
@@ -54,7 +54,7 @@ ChatGPT Notebook helps you save useful messages, excerpts, images, and notes fro
 
 Use it to collect important ChatGPT answers, organize notebooks by conversation, search saved notes, merge or reorder notes, copy notebook content, insert notes back into ChatGPT, and export or back up your notebook data.
 
-Notebook data is stored locally by default. Optional Google sign-in enables cloud backup and restore through Supabase. The extension does not run analytics, advertising, tracking, or sell user data.
+Notebook data is stored locally by default. Optional Google sign-in enables encrypted cloud backup and restore through Supabase. The extension does not run analytics, advertising, tracking, or sell user data.
 ```
 
 Category suggestion:

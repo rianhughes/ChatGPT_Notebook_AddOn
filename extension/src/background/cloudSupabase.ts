@@ -7,12 +7,17 @@ export type SupabaseCloudConfig = {
   anonKey: string;
   backupBucket: string;
   backupTable: string;
+  keyringTable: string;
 };
 
 let client: SupabaseClient | null = null;
 const memoryAuthStorage = new Map<string, string>();
 
 export function getSupabaseCloudConfig(): SupabaseCloudConfig | null {
+  if (!isEncryptedCloudSyncEnabled()) {
+    return null;
+  }
+
   const url = import.meta.env.VITE_SUPABASE_URL?.trim() ?? "";
   const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ?? "";
 
@@ -25,6 +30,7 @@ export function getSupabaseCloudConfig(): SupabaseCloudConfig | null {
     anonKey,
     backupBucket: import.meta.env.VITE_SUPABASE_BACKUP_BUCKET?.trim() || "notebook-backups",
     backupTable: import.meta.env.VITE_SUPABASE_BACKUP_TABLE?.trim() || "cloud_backups",
+    keyringTable: import.meta.env.VITE_SUPABASE_KEYRING_TABLE?.trim() || "cloud_keyrings",
   };
 }
 
@@ -95,4 +101,16 @@ function createExtensionAuthStorage(): SupportedStorage {
       await browser.storage.local.remove(key);
     },
   };
+}
+
+function isEncryptedCloudSyncEnabled(): boolean {
+  const rawValue = import.meta.env.VITE_ENCRYPTED_CLOUD_SYNC_V1;
+
+  if (!rawValue) {
+    return true;
+  }
+
+  const normalized = rawValue.trim().toLowerCase();
+
+  return normalized !== "0" && normalized !== "false" && normalized !== "off";
 }

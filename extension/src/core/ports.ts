@@ -27,6 +27,11 @@ export type RuntimeMessageType =
   | "GET_CLOUD_BACKUP_STATUS"
   | "START_GOOGLE_SIGN_IN"
   | "SIGN_OUT_CLOUD"
+  | "SETUP_ENCRYPTED_CLOUD_SYNC"
+  | "UNLOCK_CLOUD_SYNC_WITH_PASSPHRASE"
+  | "UNLOCK_CLOUD_SYNC_WITH_RECOVERY_PHRASE"
+  | "ROTATE_CLOUD_SYNC_PASSPHRASE"
+  | "LOCK_CLOUD_SYNC"
   | "FORCE_CLOUD_BACKUP"
   | "LIST_CLOUD_BACKUPS"
   | "RESTORE_CLOUD_BACKUP"
@@ -139,6 +144,31 @@ export type SignOutCloudMessage = {
   payload: Record<string, never>;
 };
 
+export type SetupEncryptedCloudSyncMessage = {
+  type: "SETUP_ENCRYPTED_CLOUD_SYNC";
+  payload: { passphrase: string };
+};
+
+export type UnlockCloudSyncWithPassphraseMessage = {
+  type: "UNLOCK_CLOUD_SYNC_WITH_PASSPHRASE";
+  payload: { passphrase: string };
+};
+
+export type UnlockCloudSyncWithRecoveryPhraseMessage = {
+  type: "UNLOCK_CLOUD_SYNC_WITH_RECOVERY_PHRASE";
+  payload: { recoveryPhrase: string };
+};
+
+export type RotateCloudSyncPassphraseMessage = {
+  type: "ROTATE_CLOUD_SYNC_PASSPHRASE";
+  payload: { currentPassphrase?: string; newPassphrase: string };
+};
+
+export type LockCloudSyncMessage = {
+  type: "LOCK_CLOUD_SYNC";
+  payload: Record<string, never>;
+};
+
 export type ForceCloudBackupMessage = {
   type: "FORCE_CLOUD_BACKUP";
   payload: Record<string, never>;
@@ -178,6 +208,11 @@ export type ExtensionMessage =
   | GetCloudBackupStatusMessage
   | StartGoogleSignInMessage
   | SignOutCloudMessage
+  | SetupEncryptedCloudSyncMessage
+  | UnlockCloudSyncWithPassphraseMessage
+  | UnlockCloudSyncWithRecoveryPhraseMessage
+  | RotateCloudSyncPassphraseMessage
+  | LockCloudSyncMessage
   | ForceCloudBackupMessage
   | ListCloudBackupsMessage
   | RestoreCloudBackupMessage
@@ -222,7 +257,7 @@ export type AutosaveStatusResponse = {
   lastBackupError: string | null;
 };
 
-export type CloudBackupStatusState = "disabled" | "signed_out" | "idle" | "pending" | "uploading" | "error";
+export type CloudBackupStatusState = "disabled" | "signed_out" | "locked" | "idle" | "pending" | "uploading" | "error";
 
 export type CloudBackupStatusResponse = {
   configured: boolean;
@@ -236,7 +271,37 @@ export type CloudBackupStatusResponse = {
   lastCloudBackupRevision: number;
   lastCloudBackupAt: string | null;
   lastCloudBackupError: string | null;
+  cloudEncryptionEnabled: boolean;
+  cloudEncryptionLocked: boolean;
+  cloudEncryptionVersion: number;
+  cloudKeyVersion: number;
+  cloudLastDecryptError: string | null;
   latestBackupId: string | null;
+};
+
+export type SetupEncryptedCloudSyncResponse = {
+  enabled: boolean;
+  recoveryPhrase?: string;
+  status: CloudBackupStatusResponse;
+  error?: string;
+};
+
+export type UnlockCloudSyncResponse = {
+  unlocked: boolean;
+  status: CloudBackupStatusResponse;
+  error?: string;
+};
+
+export type RotateCloudSyncPassphraseResponse = {
+  rotated: boolean;
+  status: CloudBackupStatusResponse;
+  error?: string;
+};
+
+export type LockCloudSyncResponse = {
+  locked: boolean;
+  status: CloudBackupStatusResponse;
+  error?: string;
 };
 
 export type CloudBackupListResponse = {
@@ -330,6 +395,19 @@ export function isExtensionMessage(value: unknown): value is ExtensionMessage {
     case "START_GOOGLE_SIGN_IN":
       return true;
     case "SIGN_OUT_CLOUD":
+      return true;
+    case "SETUP_ENCRYPTED_CLOUD_SYNC":
+      return typeof value.payload.passphrase === "string";
+    case "UNLOCK_CLOUD_SYNC_WITH_PASSPHRASE":
+      return typeof value.payload.passphrase === "string";
+    case "UNLOCK_CLOUD_SYNC_WITH_RECOVERY_PHRASE":
+      return typeof value.payload.recoveryPhrase === "string";
+    case "ROTATE_CLOUD_SYNC_PASSPHRASE":
+      return (
+        (value.payload.currentPassphrase === undefined || typeof value.payload.currentPassphrase === "string") &&
+        typeof value.payload.newPassphrase === "string"
+      );
+    case "LOCK_CLOUD_SYNC":
       return true;
     case "FORCE_CLOUD_BACKUP":
       return true;

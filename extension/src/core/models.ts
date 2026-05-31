@@ -63,7 +63,12 @@ export type AppSettingKey =
   | "lastDailyBackupDate"
   | "lastCloudBackupRevision"
   | "lastCloudBackupAt"
-  | "lastCloudBackupError";
+  | "lastCloudBackupError"
+  | "cloudEncryptionEnabled"
+  | "cloudEncryptionVersion"
+  | "cloudEncryptionLocked"
+  | "cloudKeyVersion"
+  | "cloudLastDecryptError";
 
 export type AppSetting = {
   key: AppSettingKey;

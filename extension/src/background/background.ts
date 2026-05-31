@@ -13,10 +13,14 @@ import {
   type CloudBackupStatusResponse,
   type DeleteCloudBackupsResponse,
   type InsertTextInChatGptResponse,
+  type LockCloudSyncResponse,
   type OpenSidebarWindowResponse,
+  type RotateCloudSyncPassphraseResponse,
   type RestoreCloudBackupResponse,
   type SaveChatGptMessageResponse,
+  type SetupEncryptedCloudSyncResponse,
   type SubmitAiOperationPackageResponse,
+  type UnlockCloudSyncResponse,
   isExtensionMessage,
 } from "../core/ports";
 import {
@@ -29,6 +33,7 @@ import {
 import { createSidebarAdapter } from "./sidebarAdapter";
 import { forceNotebookAutosave, getAutosaveStatus, noteNotebookDataChanged } from "./autosave";
 import {
+  queueCloudBackup,
   forceCloudBackup,
   getCloudBackupStatus,
   deleteCloudBackups,
@@ -36,6 +41,13 @@ import {
   restoreCloudBackup,
 } from "./cloudBackup";
 import { signOutCloud, startGoogleSignIn } from "./cloudAuth";
+import {
+  lockCloudSync,
+  rotateCloudSyncPassphrase,
+  setupEncryptedCloudSync,
+  unlockCloudSyncWithPassphrase,
+  unlockCloudSyncWithRecoveryPhrase,
+} from "./cloudKeyring";
 import { initializeDetachedSidebarWindowTracking, openDetachedSidebarWindow } from "./sidebarWindow";
 
 type ActionClickTab = {
@@ -173,6 +185,88 @@ async function handleMessage(message: ExtensionMessage): Promise<unknown> {
       return startGoogleSignIn() satisfies Promise<CloudBackupStatusResponse>;
     case "SIGN_OUT_CLOUD":
       return signOutCloud() satisfies Promise<CloudBackupStatusResponse>;
+    case "SETUP_ENCRYPTED_CLOUD_SYNC":
+      try {
+        const result = await setupEncryptedCloudSync(message.payload.passphrase);
+        await queueCloudBackup();
+
+        return {
+          enabled: true,
+          recoveryPhrase: result.recoveryPhrase,
+          status: await getCloudBackupStatus(),
+        } satisfies SetupEncryptedCloudSyncResponse;
+      } catch (error) {
+        return {
+          enabled: false,
+          status: await getCloudBackupStatus(),
+          error: error instanceof Error ? error.message : "Could not enable encrypted cloud sync.",
+        } satisfies SetupEncryptedCloudSyncResponse;
+      }
+    case "UNLOCK_CLOUD_SYNC_WITH_PASSPHRASE":
+      try {
+        await unlockCloudSyncWithPassphrase(message.payload.passphrase);
+        await queueCloudBackup();
+
+        return {
+          unlocked: true,
+          status: await getCloudBackupStatus(),
+        } satisfies UnlockCloudSyncResponse;
+      } catch (error) {
+        return {
+          unlocked: false,
+          status: await getCloudBackupStatus(),
+          error: error instanceof Error ? error.message : "Could not unlock encrypted cloud sync.",
+        } satisfies UnlockCloudSyncResponse;
+      }
+    case "UNLOCK_CLOUD_SYNC_WITH_RECOVERY_PHRASE":
+      try {
+        await unlockCloudSyncWithRecoveryPhrase(message.payload.recoveryPhrase);
+        await queueCloudBackup();
+
+        return {
+          unlocked: true,
+          status: await getCloudBackupStatus(),
+        } satisfies UnlockCloudSyncResponse;
+      } catch (error) {
+        return {
+          unlocked: false,
+          status: await getCloudBackupStatus(),
+          error: error instanceof Error ? error.message : "Could not unlock encrypted cloud sync.",
+        } satisfies UnlockCloudSyncResponse;
+      }
+    case "ROTATE_CLOUD_SYNC_PASSPHRASE":
+      try {
+        await rotateCloudSyncPassphrase({
+          currentPassphrase: message.payload.currentPassphrase,
+          newPassphrase: message.payload.newPassphrase,
+        });
+
+        return {
+          rotated: true,
+          status: await getCloudBackupStatus(),
+        } satisfies RotateCloudSyncPassphraseResponse;
+      } catch (error) {
+        return {
+          rotated: false,
+          status: await getCloudBackupStatus(),
+          error: error instanceof Error ? error.message : "Could not rotate cloud sync passphrase.",
+        } satisfies RotateCloudSyncPassphraseResponse;
+      }
+    case "LOCK_CLOUD_SYNC":
+      try {
+        await lockCloudSync();
+
+        return {
+          locked: true,
+          status: await getCloudBackupStatus(),
+        } satisfies LockCloudSyncResponse;
+      } catch (error) {
+        return {
+          locked: false,
+          status: await getCloudBackupStatus(),
+          error: error instanceof Error ? error.message : "Could not lock encrypted cloud sync.",
+        } satisfies LockCloudSyncResponse;
+      }
     case "FORCE_CLOUD_BACKUP":
       return forceCloudBackup() satisfies Promise<CloudBackupStatusResponse>;
     case "LIST_CLOUD_BACKUPS":

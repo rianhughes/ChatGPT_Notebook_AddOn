@@ -1032,6 +1032,16 @@
         return true;
       case "SIGN_OUT_CLOUD":
         return true;
+      case "SETUP_ENCRYPTED_CLOUD_SYNC":
+        return typeof value.payload.passphrase === "string";
+      case "UNLOCK_CLOUD_SYNC_WITH_PASSPHRASE":
+        return typeof value.payload.passphrase === "string";
+      case "UNLOCK_CLOUD_SYNC_WITH_RECOVERY_PHRASE":
+        return typeof value.payload.recoveryPhrase === "string";
+      case "ROTATE_CLOUD_SYNC_PASSPHRASE":
+        return (value.payload.currentPassphrase === void 0 || typeof value.payload.currentPassphrase === "string") && typeof value.payload.newPassphrase === "string";
+      case "LOCK_CLOUD_SYNC":
+        return true;
       case "FORCE_CLOUD_BACKUP":
         return true;
       case "LIST_CLOUD_BACKUPS":

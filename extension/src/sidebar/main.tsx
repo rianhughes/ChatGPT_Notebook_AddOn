@@ -32,8 +32,12 @@ import type {
   CloudBackupStatusResponse,
   DeleteCloudBackupsResponse,
   InsertTextInChatGptResponse,
+  LockCloudSyncResponse,
   OpenSidebarWindowResponse,
+  RotateCloudSyncPassphraseResponse,
   RestoreCloudBackupResponse,
+  SetupEncryptedCloudSyncResponse,
+  UnlockCloudSyncResponse,
 } from "../core/ports";
 import { getMessageCopyText } from "../core/clipboard";
 import { contentHashFromParts, createId } from "../core/hash";
@@ -115,6 +119,13 @@ const themeLabels: Record<ThemeMode, string> = {
   night: "Night",
 };
 
+type CloudDialogMode = "setup" | "unlock" | "rotate";
+
+type CloudDialogState = {
+  mode: CloudDialogMode;
+  token: number;
+};
+
 function getThemeIcon(theme: ThemeMode) {
   if (theme === "day") {
     return <Sun size={17} aria-hidden="true" />;
@@ -155,6 +166,24 @@ function App() {
   const [cloudRestoreInProgress, setCloudRestoreInProgress] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [cloudDialog, setCloudDialog] = useState<CloudDialogState | null>(null);
+  const [cloudDialogBusy, setCloudDialogBusy] = useState(false);
+  const [cloudDialogError, setCloudDialogError] = useState("");
+  const [setupPassphrase, setSetupPassphrase] = useState("");
+  const [setupPassphraseConfirm, setSetupPassphraseConfirm] = useState("");
+  const [setupRecoveryPhrase, setSetupRecoveryPhrase] = useState<string | null>(null);
+  const [setupEnabledStatus, setSetupEnabledStatus] = useState<CloudBackupStatusResponse | null>(null);
+  const [setupRecoveryDownloaded, setSetupRecoveryDownloaded] = useState(false);
+  const [setupWord4, setSetupWord4] = useState("");
+  const [setupWord17, setSetupWord17] = useState("");
+  const [unlockMethod, setUnlockMethod] = useState<"passphrase" | "recovery">("passphrase");
+  const [unlockPassphrase, setUnlockPassphrase] = useState("");
+  const [unlockRecoveryPhrase, setUnlockRecoveryPhrase] = useState("");
+  const [rotateCurrentPassphrase, setRotateCurrentPassphrase] = useState("");
+  const [rotateNewPassphrase, setRotateNewPassphrase] = useState("");
+  const [rotateConfirmPassphrase, setRotateConfirmPassphrase] = useState("");
+  const cloudDialogTokenRef = useRef(0);
+  const cloudDialogResolveRef = useRef(new Map<number, (status: CloudBackupStatusResponse | null) => void>());
 
   const selectedThread = threads.find((thread) => thread.id === selectedThreadId) ?? null;
   const isNotebookDetailVisible = isNotebookOpen && Boolean(selectedThread);
@@ -268,17 +297,396 @@ function App() {
     }
   }, []);
 
+  const downloadRecoveryPhrase = useCallback((recoveryPhrase: string) => {
+    const exportedAt = new Date().toISOString();
+    const datePart = exportedAt.slice(0, 10);
+    const contents = [
+      "ChatGPT Notebook Cloud Recovery Phrase",
+      "",
+      "Keep this phrase private. Anyone with these words can decrypt your cloud backup.",
+      "If you lose both this phrase and your passphrase, your encrypted cloud data cannot be recovered.",
+      "",
+      `Exported at: ${exportedAt}`,
+      "",
+      recoveryPhrase,
+      "",
+    ].join("\n");
+    const blobUrl = URL.createObjectURL(new Blob([contents], { type: "text/plain" }));
+    const anchor = document.createElement("a");
+
+    anchor.href = blobUrl;
+    anchor.download = `chatgpt-notebook-recovery-phrase-${datePart}.txt`;
+    anchor.click();
+    URL.revokeObjectURL(blobUrl);
+  }, []);
+
+  const resetSetupDialogState = useCallback(() => {
+    setSetupPassphrase("");
+    setSetupPassphraseConfirm("");
+    setSetupRecoveryPhrase(null);
+    setSetupEnabledStatus(null);
+    setSetupRecoveryDownloaded(false);
+    setSetupWord4("");
+    setSetupWord17("");
+  }, []);
+
+  const resetUnlockDialogState = useCallback(() => {
+    setUnlockMethod("passphrase");
+    setUnlockPassphrase("");
+    setUnlockRecoveryPhrase("");
+  }, []);
+
+  const resetRotateDialogState = useCallback(() => {
+    setRotateCurrentPassphrase("");
+    setRotateNewPassphrase("");
+    setRotateConfirmPassphrase("");
+  }, []);
+
+  const closeCloudDialog = useCallback(
+    (resolvedStatus: CloudBackupStatusResponse | null) => {
+      const currentDialog = cloudDialog;
+
+      if (currentDialog) {
+        const resolve = cloudDialogResolveRef.current.get(currentDialog.token);
+
+        if (resolve) {
+          resolve(resolvedStatus);
+          cloudDialogResolveRef.current.delete(currentDialog.token);
+        }
+      }
+
+      setCloudDialog(null);
+      setCloudDialogBusy(false);
+      setCloudDialogError("");
+      resetSetupDialogState();
+      resetUnlockDialogState();
+      resetRotateDialogState();
+    },
+    [cloudDialog, resetRotateDialogState, resetSetupDialogState, resetUnlockDialogState],
+  );
+
+  const dismissCloudDialog = useCallback(() => {
+    if (cloudDialog?.mode === "setup" && setupRecoveryPhrase && !setupRecoveryDownloaded) {
+      setCloudDialogError("Download your recovery phrase before closing.");
+      return;
+    }
+
+    if (cloudDialog?.mode === "setup" && setupEnabledStatus) {
+      closeCloudDialog(setupEnabledStatus);
+      return;
+    }
+
+    closeCloudDialog(null);
+  }, [cloudDialog?.mode, closeCloudDialog, setupEnabledStatus, setupRecoveryDownloaded, setupRecoveryPhrase]);
+
+  const setupEncryptedCloudSync = useCallback(async (): Promise<CloudBackupStatusResponse | null> => {
+    setError("");
+    setStatus("");
+    setCloudDialogError("");
+    setCloudDialogBusy(false);
+    cloudDialogResolveRef.current.forEach((resolve) => resolve(null));
+    cloudDialogResolveRef.current.clear();
+    resetSetupDialogState();
+    resetUnlockDialogState();
+    resetRotateDialogState();
+
+    const token = cloudDialogTokenRef.current + 1;
+    cloudDialogTokenRef.current = token;
+    setCloudDialog({
+      mode: "setup",
+      token,
+    });
+
+    return new Promise((resolve) => {
+      cloudDialogResolveRef.current.set(token, resolve);
+    });
+  }, [resetRotateDialogState, resetSetupDialogState, resetUnlockDialogState]);
+
+  const downloadSetupRecoveryPhrase = useCallback(() => {
+    if (!setupRecoveryPhrase) {
+      return;
+    }
+
+    downloadRecoveryPhrase(setupRecoveryPhrase);
+    setSetupRecoveryDownloaded(true);
+    setStatus("Recovery phrase downloaded.");
+  }, [downloadRecoveryPhrase, setupRecoveryPhrase]);
+
+  const unlockCloudSync = useCallback(async (): Promise<CloudBackupStatusResponse | null> => {
+    setError("");
+    setStatus("");
+    setCloudDialogError("");
+    setCloudDialogBusy(false);
+    cloudDialogResolveRef.current.forEach((resolve) => resolve(null));
+    cloudDialogResolveRef.current.clear();
+    resetSetupDialogState();
+    resetUnlockDialogState();
+    resetRotateDialogState();
+
+    const token = cloudDialogTokenRef.current + 1;
+    cloudDialogTokenRef.current = token;
+    setCloudDialog({
+      mode: "unlock",
+      token,
+    });
+
+    return new Promise((resolve) => {
+      cloudDialogResolveRef.current.set(token, resolve);
+    });
+  }, [resetRotateDialogState, resetSetupDialogState, resetUnlockDialogState]);
+
+  const lockCloudSync = useCallback(async () => {
+    setError("");
+    setStatus("");
+
+    try {
+      const response = await sendRuntimeMessage<LockCloudSyncResponse>({
+        type: "LOCK_CLOUD_SYNC",
+        payload: {},
+      });
+
+      setCloudBackupStatus(response.status);
+
+      if (!response.locked) {
+        setError(response.error ?? "Could not lock encrypted cloud sync.");
+        return;
+      }
+
+      setStatus("Encrypted cloud sync locked.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not lock encrypted cloud sync.");
+      void loadCloudBackupStatus();
+    }
+  }, [loadCloudBackupStatus]);
+
+  const rotateCloudSyncPassphrase = useCallback(() => {
+    setError("");
+    setStatus("");
+    setCloudDialogError("");
+    setCloudDialogBusy(false);
+    cloudDialogResolveRef.current.forEach((resolve) => resolve(null));
+    cloudDialogResolveRef.current.clear();
+    resetSetupDialogState();
+    resetUnlockDialogState();
+    resetRotateDialogState();
+
+    const token = cloudDialogTokenRef.current + 1;
+    cloudDialogTokenRef.current = token;
+    setCloudDialog({
+      mode: "rotate",
+      token,
+    });
+  }, [resetRotateDialogState, resetSetupDialogState, resetUnlockDialogState]);
+
+  const submitSetupDialog = useCallback(async () => {
+    if (cloudDialog?.mode !== "setup") {
+      return;
+    }
+
+    setCloudDialogError("");
+
+    if (setupRecoveryPhrase) {
+      const words = setupRecoveryPhrase.split(" ");
+      const expectedWord4 = (words[3] ?? "").toLowerCase();
+      const expectedWord17 = (words[16] ?? "").toLowerCase();
+
+      if (!setupRecoveryDownloaded) {
+        setCloudDialogError("Download your recovery phrase before finishing setup.");
+        return;
+      }
+
+      if (setupWord4.trim().toLowerCase() !== expectedWord4 || setupWord17.trim().toLowerCase() !== expectedWord17) {
+        setCloudDialogError("Recovery phrase check failed. Verify word #4 and word #17.");
+        return;
+      }
+
+      setStatus("Encrypted cloud sync enabled.");
+      closeCloudDialog(setupEnabledStatus);
+      return;
+    }
+
+    const normalizedPassphrase = setupPassphrase.normalize("NFKC").trim();
+
+    if (normalizedPassphrase.length < 8) {
+      setCloudDialogError("Passphrase must be at least 8 characters.");
+      return;
+    }
+
+    if (setupPassphrase !== setupPassphraseConfirm) {
+      setCloudDialogError("Passphrases do not match.");
+      return;
+    }
+
+    setCloudDialogBusy(true);
+
+    try {
+      const response = await sendRuntimeMessage<SetupEncryptedCloudSyncResponse>({
+        type: "SETUP_ENCRYPTED_CLOUD_SYNC",
+        payload: { passphrase: setupPassphrase },
+      });
+
+      setCloudBackupStatus(response.status);
+
+      if (!response.enabled) {
+        setCloudDialogError(response.error ?? "Could not enable encrypted cloud sync.");
+        return;
+      }
+
+      setSetupEnabledStatus(response.status);
+
+      if (response.recoveryPhrase) {
+        setSetupRecoveryPhrase(response.recoveryPhrase);
+        return;
+      }
+
+      setStatus("Encrypted cloud sync enabled.");
+      closeCloudDialog(response.status);
+    } catch (error) {
+      setCloudDialogError(error instanceof Error ? error.message : "Could not enable encrypted cloud sync.");
+      void loadCloudBackupStatus();
+    } finally {
+      setCloudDialogBusy(false);
+    }
+  }, [
+    cloudDialog?.mode,
+    closeCloudDialog,
+    loadCloudBackupStatus,
+    setupEnabledStatus,
+    setupPassphrase,
+    setupPassphraseConfirm,
+    setupRecoveryDownloaded,
+    setupRecoveryPhrase,
+    setupWord17,
+    setupWord4,
+  ]);
+
+  const submitUnlockDialog = useCallback(async () => {
+    if (cloudDialog?.mode !== "unlock") {
+      return;
+    }
+
+    setCloudDialogError("");
+    setCloudDialogBusy(true);
+
+    try {
+      const response =
+        unlockMethod === "passphrase"
+          ? await sendRuntimeMessage<UnlockCloudSyncResponse>({
+              type: "UNLOCK_CLOUD_SYNC_WITH_PASSPHRASE",
+              payload: { passphrase: unlockPassphrase },
+            })
+          : await sendRuntimeMessage<UnlockCloudSyncResponse>({
+              type: "UNLOCK_CLOUD_SYNC_WITH_RECOVERY_PHRASE",
+              payload: { recoveryPhrase: unlockRecoveryPhrase },
+            });
+
+      setCloudBackupStatus(response.status);
+
+      if (!response.unlocked) {
+        setCloudDialogError(response.error ?? "Could not unlock encrypted cloud sync.");
+        return;
+      }
+
+      setStatus(
+        unlockMethod === "passphrase"
+          ? "Encrypted cloud sync unlocked."
+          : "Encrypted cloud sync unlocked with recovery phrase.",
+      );
+      closeCloudDialog(response.status);
+    } catch (error) {
+      setCloudDialogError(error instanceof Error ? error.message : "Could not unlock encrypted cloud sync.");
+      void loadCloudBackupStatus();
+    } finally {
+      setCloudDialogBusy(false);
+    }
+  }, [cloudDialog?.mode, closeCloudDialog, loadCloudBackupStatus, unlockMethod, unlockPassphrase, unlockRecoveryPhrase]);
+
+  const submitRotateDialog = useCallback(async () => {
+    if (cloudDialog?.mode !== "rotate") {
+      return;
+    }
+
+    setCloudDialogError("");
+
+    if (rotateNewPassphrase.normalize("NFKC").trim().length < 8) {
+      setCloudDialogError("New passphrase must be at least 8 characters.");
+      return;
+    }
+
+    if (rotateNewPassphrase !== rotateConfirmPassphrase) {
+      setCloudDialogError("Passphrases do not match.");
+      return;
+    }
+
+    setCloudDialogBusy(true);
+
+    try {
+      const response = await sendRuntimeMessage<RotateCloudSyncPassphraseResponse>({
+        type: "ROTATE_CLOUD_SYNC_PASSPHRASE",
+        payload: {
+          currentPassphrase: rotateCurrentPassphrase.trim() || undefined,
+          newPassphrase: rotateNewPassphrase,
+        },
+      });
+
+      setCloudBackupStatus(response.status);
+
+      if (!response.rotated) {
+        setCloudDialogError(response.error ?? "Could not rotate cloud sync passphrase.");
+        return;
+      }
+
+      setStatus("Cloud sync passphrase updated.");
+      closeCloudDialog(response.status);
+    } catch (error) {
+      setCloudDialogError(error instanceof Error ? error.message : "Could not rotate cloud sync passphrase.");
+      void loadCloudBackupStatus();
+    } finally {
+      setCloudDialogBusy(false);
+    }
+  }, [
+    cloudDialog?.mode,
+    closeCloudDialog,
+    loadCloudBackupStatus,
+    rotateConfirmPassphrase,
+    rotateCurrentPassphrase,
+    rotateNewPassphrase,
+  ]);
+
   const startCloudSignIn = useCallback(async () => {
     setError("");
     setStatus("");
 
     try {
-      const nextStatus = await sendRuntimeMessage<CloudBackupStatusResponse>({
+      let nextStatus = await sendRuntimeMessage<CloudBackupStatusResponse>({
         type: "START_GOOGLE_SIGN_IN",
         payload: {},
       });
 
       setCloudBackupStatus(nextStatus);
+
+      if (!nextStatus.cloudEncryptionEnabled) {
+        const enabledStatus = await setupEncryptedCloudSync();
+
+        if (!enabledStatus) {
+          setStatus("Signed in. Enable encrypted cloud sync to start cloud backups.");
+          return;
+        }
+
+        nextStatus = enabledStatus;
+      }
+
+      if (nextStatus.cloudEncryptionLocked) {
+        const unlockedStatus = await unlockCloudSync();
+
+        if (!unlockedStatus) {
+          setStatus("Signed in. Encrypted cloud sync is locked.");
+          return;
+        }
+
+        nextStatus = unlockedStatus;
+      }
+
       const restored = await maybeRestoreCloudBackupOnEmptyDevice(nextStatus);
 
       if (!restored) {
@@ -288,7 +696,7 @@ function App() {
       setError(error instanceof Error ? error.message : "Could not sign in with Google.");
       void loadCloudBackupStatus();
     }
-  }, [loadCloudBackupStatus]);
+  }, [loadCloudBackupStatus, setupEncryptedCloudSync, unlockCloudSync]);
 
   const signOutCloudBackup = useCallback(async () => {
     setError("");
@@ -312,18 +720,64 @@ function App() {
     setError("");
     setStatus("");
 
+    let nextStatus = cloudBackupStatus;
+
+    if (nextStatus?.configured && nextStatus.signedIn && !nextStatus.cloudEncryptionEnabled) {
+      const enabledStatus = await setupEncryptedCloudSync();
+
+      if (!enabledStatus) {
+        setStatus("Cloud backup is waiting for encrypted sync setup.");
+        return;
+      }
+
+      nextStatus = enabledStatus;
+    }
+
+    if (nextStatus?.configured && nextStatus.signedIn && nextStatus.cloudEncryptionLocked) {
+      const unlockedStatus = await unlockCloudSync();
+
+      if (!unlockedStatus) {
+        return;
+      }
+
+      nextStatus = unlockedStatus;
+    }
+
     try {
-      const nextStatus = await sendRuntimeMessage<CloudBackupStatusResponse>({
+      const forcedStatus = await sendRuntimeMessage<CloudBackupStatusResponse>({
         type: "FORCE_CLOUD_BACKUP",
         payload: {},
       });
 
-      setCloudBackupStatus(nextStatus);
+      setCloudBackupStatus(forcedStatus);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Could not start cloud backup.");
       void loadCloudBackupStatus();
     }
-  }, [loadCloudBackupStatus]);
+  }, [cloudBackupStatus, loadCloudBackupStatus, setupEncryptedCloudSync, unlockCloudSync]);
+
+  useEffect(() => {
+    return () => {
+      cloudDialogResolveRef.current.forEach((resolve) => resolve(null));
+      cloudDialogResolveRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cloudDialog) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dismissCloudDialog();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [cloudDialog, dismissCloudDialog]);
 
   const loadMessages = useCallback(async (threadId: string | null) => {
     if (!threadId) {
@@ -348,7 +802,19 @@ function App() {
     setError("");
     setStatus("");
 
-    const backupId = cloudBackupStatus?.latestBackupId;
+    let nextStatus = cloudBackupStatus;
+
+    if (nextStatus?.configured && nextStatus.signedIn && nextStatus.cloudEncryptionLocked) {
+      const unlockedStatus = await unlockCloudSync();
+
+      if (!unlockedStatus) {
+        return;
+      }
+
+      nextStatus = unlockedStatus;
+    }
+
+    const backupId = nextStatus?.latestBackupId;
 
     if (!backupId) {
       setError("No cloud backup is available to restore.");
@@ -371,13 +837,9 @@ function App() {
       void loadCloudBackupStatus();
     }
   }, [
-    cloudBackupStatus?.latestBackupId,
-    loadAiOperationProposals,
-    loadAutosaveStatus,
+    cloudBackupStatus,
     loadCloudBackupStatus,
-    loadFolders,
-    loadMessages,
-    loadThreads,
+    unlockCloudSync,
   ]);
 
   const deleteAllCloudBackups = useCallback(async () => {
@@ -550,6 +1012,10 @@ function App() {
 
   async function maybeRestoreCloudBackupOnEmptyDevice(nextStatus: CloudBackupStatusResponse): Promise<boolean> {
     if (!nextStatus.configured || !nextStatus.signedIn) {
+      return false;
+    }
+
+    if (!nextStatus.cloudEncryptionEnabled || nextStatus.cloudEncryptionLocked) {
       return false;
     }
 
@@ -1661,6 +2127,10 @@ function App() {
     <CloudBackupControls
       status={cloudBackupStatus}
       restoreInProgress={cloudRestoreInProgress}
+      onEnableEncryption={() => void setupEncryptedCloudSync()}
+      onUnlock={() => void unlockCloudSync()}
+      onLock={() => void lockCloudSync()}
+      onRotatePassphrase={() => void rotateCloudSyncPassphrase()}
       onSignOut={() => void signOutCloudBackup()}
       onBackupNow={() => void forceCloudBackup()}
       onRestoreLatest={() => void restoreLatestCloudBackup()}
@@ -1668,7 +2138,32 @@ function App() {
     />
   ) : null;
   const cloudAccountControl =
-    cloudBackupStatus?.configured && cloudBackupStatus.signedIn ? (
+    cloudBackupStatus?.configured && cloudBackupStatus.signedIn && !cloudBackupStatus.cloudEncryptionEnabled ? (
+      <button
+        className="tool-button secondary thread-panel-cloud-sign-in-button"
+        type="button"
+        title="Enable encrypted cloud sync"
+        aria-label="Enable encrypted cloud sync"
+        onClick={() => void setupEncryptedCloudSync()}
+      >
+        <Cloud size={16} aria-hidden="true" />
+        Enable encryption
+      </button>
+    ) : cloudBackupStatus?.configured &&
+        cloudBackupStatus.signedIn &&
+        cloudBackupStatus.cloudEncryptionEnabled &&
+        cloudBackupStatus.cloudEncryptionLocked ? (
+      <button
+        className="tool-button secondary thread-panel-cloud-sign-in-button"
+        type="button"
+        title="Unlock encrypted cloud sync"
+        aria-label="Unlock encrypted cloud sync"
+        onClick={() => void unlockCloudSync()}
+      >
+        <LogIn size={16} aria-hidden="true" />
+        Unlock
+      </button>
+    ) : cloudBackupStatus?.configured && cloudBackupStatus.signedIn ? (
       <button
         className="tool-button secondary thread-panel-cloud-account-button"
         type="button"
@@ -1692,84 +2187,429 @@ function App() {
       </button>
     ) : null;
   const noteCollapseToggleLabel = areAllVisibleMessagesCollapsed ? "Expand notes" : "Collapse notes";
+  const cloudDialogSubmitLabel =
+    cloudDialog?.mode === "setup"
+      ? setupRecoveryPhrase
+        ? "Finish setup"
+        : "Enable encryption"
+      : cloudDialog?.mode === "unlock"
+        ? "Unlock"
+        : "Rotate passphrase";
+  const cloudDialogTitle =
+    cloudDialog?.mode === "setup"
+      ? "Enable Encrypted Cloud Sync"
+      : cloudDialog?.mode === "unlock"
+        ? "Unlock Encrypted Cloud Sync"
+        : "Rotate Cloud Sync Passphrase";
+  const cloudDialogDescription =
+    cloudDialog?.mode === "setup"
+      ? setupRecoveryPhrase
+        ? "Save this recovery phrase. It is required if you forget your passphrase."
+        : "Create a passphrase. It encrypts cloud backups before upload."
+      : cloudDialog?.mode === "unlock"
+        ? "Use your passphrase or recovery phrase to decrypt cloud backups on this device."
+        : "Choose a new passphrase for your cloud encryption key.";
+  const cloudDialogCancelLabel = cloudDialog?.mode === "setup" && setupRecoveryPhrase ? "Close" : "Cancel";
+  const handleCloudDialogSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (cloudDialog?.mode === "setup") {
+      void submitSetupDialog();
+      return;
+    }
+
+    if (cloudDialog?.mode === "unlock") {
+      void submitUnlockDialog();
+      return;
+    }
+
+    if (cloudDialog?.mode === "rotate") {
+      void submitRotateDialog();
+    }
+  };
+  const cloudDialogContent = cloudDialog ? (
+    <div
+      className="cloud-sync-dialog-overlay"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !cloudDialogBusy) {
+          dismissCloudDialog();
+        }
+      }}
+    >
+      <section
+        className="cloud-sync-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cloud-sync-dialog-title"
+        aria-describedby="cloud-sync-dialog-description"
+      >
+        <header className="cloud-sync-dialog-header">
+          <h2 id="cloud-sync-dialog-title" className="cloud-sync-dialog-title">
+            {cloudDialogTitle}
+          </h2>
+          <p id="cloud-sync-dialog-description" className="cloud-sync-dialog-description">
+            {cloudDialogDescription}
+          </p>
+        </header>
+        <form className="cloud-sync-dialog-form" onSubmit={handleCloudDialogSubmit}>
+          {cloudDialog.mode === "setup" && !setupRecoveryPhrase ? (
+            <>
+              <label className="cloud-sync-dialog-field">
+                <span className="cloud-sync-dialog-label">Passphrase</span>
+                <input
+                  className="input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={setupPassphrase}
+                  onChange={(event) => setSetupPassphrase(event.target.value)}
+                  disabled={cloudDialogBusy}
+                  required
+                />
+              </label>
+              <label className="cloud-sync-dialog-field">
+                <span className="cloud-sync-dialog-label">Confirm passphrase</span>
+                <input
+                  className="input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={setupPassphraseConfirm}
+                  onChange={(event) => setSetupPassphraseConfirm(event.target.value)}
+                  disabled={cloudDialogBusy}
+                  required
+                />
+              </label>
+              <p className="cloud-sync-dialog-hint">
+                Use at least 8 characters. Your passphrase is never uploaded to Supabase.
+              </p>
+            </>
+          ) : null}
+          {cloudDialog.mode === "setup" && setupRecoveryPhrase ? (
+            <>
+              <label className="cloud-sync-dialog-field">
+                <span className="cloud-sync-dialog-label">Recovery phrase</span>
+                <textarea
+                  className="input cloud-sync-dialog-recovery"
+                  value={setupRecoveryPhrase}
+                  readOnly
+                  rows={3}
+                />
+              </label>
+              <div className="cloud-sync-dialog-inline-actions">
+                <button
+                  className="tool-button secondary"
+                  type="button"
+                  onClick={downloadSetupRecoveryPhrase}
+                  disabled={cloudDialogBusy}
+                >
+                  Download phrase
+                </button>
+              </div>
+              <p className="cloud-sync-dialog-hint">
+                Confirm two words to verify your saved backup phrase before closing this step.
+              </p>
+              <div className="cloud-sync-dialog-word-check-grid">
+                <label className="cloud-sync-dialog-field">
+                  <span className="cloud-sync-dialog-label">Word #4</span>
+                  <input
+                    className="input"
+                    type="text"
+                    autoCapitalize="off"
+                    autoComplete="off"
+                    value={setupWord4}
+                    onChange={(event) => setSetupWord4(event.target.value)}
+                    disabled={cloudDialogBusy}
+                    required
+                  />
+                </label>
+                <label className="cloud-sync-dialog-field">
+                  <span className="cloud-sync-dialog-label">Word #17</span>
+                  <input
+                    className="input"
+                    type="text"
+                    autoCapitalize="off"
+                    autoComplete="off"
+                    value={setupWord17}
+                    onChange={(event) => setSetupWord17(event.target.value)}
+                    disabled={cloudDialogBusy}
+                    required
+                  />
+                </label>
+              </div>
+            </>
+          ) : null}
+          {cloudDialog.mode === "unlock" ? (
+            <>
+              <div className="cloud-sync-dialog-methods" role="radiogroup" aria-label="Unlock method">
+                <label className="cloud-sync-dialog-method-option">
+                  <input
+                    type="radio"
+                    name="cloud-unlock-method"
+                    value="passphrase"
+                    checked={unlockMethod === "passphrase"}
+                    onChange={() => setUnlockMethod("passphrase")}
+                    disabled={cloudDialogBusy}
+                  />
+                  <span>Passphrase</span>
+                </label>
+                <label className="cloud-sync-dialog-method-option">
+                  <input
+                    type="radio"
+                    name="cloud-unlock-method"
+                    value="recovery"
+                    checked={unlockMethod === "recovery"}
+                    onChange={() => setUnlockMethod("recovery")}
+                    disabled={cloudDialogBusy}
+                  />
+                  <span>Recovery phrase</span>
+                </label>
+              </div>
+              {unlockMethod === "passphrase" ? (
+                <label className="cloud-sync-dialog-field">
+                  <span className="cloud-sync-dialog-label">Passphrase</span>
+                  <input
+                    className="input"
+                    type="password"
+                    autoComplete="current-password"
+                    value={unlockPassphrase}
+                    onChange={(event) => setUnlockPassphrase(event.target.value)}
+                    disabled={cloudDialogBusy}
+                    required
+                  />
+                </label>
+              ) : (
+                <label className="cloud-sync-dialog-field">
+                  <span className="cloud-sync-dialog-label">Recovery phrase (24 words)</span>
+                  <textarea
+                    className="input cloud-sync-dialog-recovery"
+                    value={unlockRecoveryPhrase}
+                    onChange={(event) => setUnlockRecoveryPhrase(event.target.value)}
+                    disabled={cloudDialogBusy}
+                    autoCapitalize="off"
+                    autoComplete="off"
+                    rows={3}
+                    required
+                  />
+                </label>
+              )}
+            </>
+          ) : null}
+          {cloudDialog.mode === "rotate" ? (
+            <>
+              <label className="cloud-sync-dialog-field">
+                <span className="cloud-sync-dialog-label">Current passphrase (optional if already unlocked)</span>
+                <input
+                  className="input"
+                  type="password"
+                  autoComplete="current-password"
+                  value={rotateCurrentPassphrase}
+                  onChange={(event) => setRotateCurrentPassphrase(event.target.value)}
+                  disabled={cloudDialogBusy}
+                />
+              </label>
+              <label className="cloud-sync-dialog-field">
+                <span className="cloud-sync-dialog-label">New passphrase</span>
+                <input
+                  className="input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={rotateNewPassphrase}
+                  onChange={(event) => setRotateNewPassphrase(event.target.value)}
+                  disabled={cloudDialogBusy}
+                  required
+                />
+              </label>
+              <label className="cloud-sync-dialog-field">
+                <span className="cloud-sync-dialog-label">Confirm new passphrase</span>
+                <input
+                  className="input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={rotateConfirmPassphrase}
+                  onChange={(event) => setRotateConfirmPassphrase(event.target.value)}
+                  disabled={cloudDialogBusy}
+                  required
+                />
+              </label>
+              <p className="cloud-sync-dialog-hint">
+                Rotating changes the passphrase wrapper only. Existing cloud backups stay encrypted and synced.
+              </p>
+            </>
+          ) : null}
+          {cloudDialogError ? (
+            <p className="cloud-sync-dialog-error" role="alert">
+              {cloudDialogError}
+            </p>
+          ) : null}
+          <footer className="cloud-sync-dialog-actions">
+            <button className="tool-button secondary" type="button" onClick={dismissCloudDialog} disabled={cloudDialogBusy}>
+              {cloudDialogCancelLabel}
+            </button>
+            <button className="tool-button cloud-sync-dialog-submit" type="submit" disabled={cloudDialogBusy}>
+              {cloudDialogBusy ? "Working..." : cloudDialogSubmitLabel}
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+  ) : null;
 
   return (
-    <main className={`app-shell${isNotebookDetailVisible ? " is-notebook-detail" : " is-notebook-list"}`}>
-      {isNotebookDetailVisible ? (
-        <>
-          <header className="notebook-detail-header">
-            <button className="tool-button secondary notebook-back-button" type="button" onClick={showNotebookList}>
-              <ArrowLeft size={16} aria-hidden="true" />
-              All notebooks
-            </button>
-            <h1 className="notebook-detail-title">{selectedThread?.title ?? "Notebook"}</h1>
-            <div className="notebook-detail-actions">
-              {autosaveFeedback}
-              <button
-                className="icon-button notebook-detail-new-note-button"
-                type="button"
-                title="Create new note"
-                aria-label="Create new note"
-                disabled={!selectedThread}
-                onClick={() => void createNoteInSelectedNotebook()}
-              >
-                <Plus size={18} aria-hidden="true" />
+    <>
+      <main className={`app-shell${isNotebookDetailVisible ? " is-notebook-detail" : " is-notebook-list"}`}>
+        {isNotebookDetailVisible ? (
+          <>
+            <header className="notebook-detail-header">
+              <button className="tool-button secondary notebook-back-button" type="button" onClick={showNotebookList}>
+                <ArrowLeft size={16} aria-hidden="true" />
+                All notebooks
               </button>
-              <button
-                className="icon-button notebook-detail-notes-toggle"
-                type="button"
-                title={noteCollapseToggleLabel}
-                aria-label={noteCollapseToggleLabel}
-                disabled={visibleMessages.length === 0}
-                onClick={toggleAllVisibleMessagesCollapsed}
-              >
-                {areAllVisibleMessagesCollapsed ? (
-                  <UnfoldVertical size={18} aria-hidden="true" />
-                ) : (
-                  <ListCollapse size={18} aria-hidden="true" />
-                )}
-              </button>
-              <button
-                className={`icon-button notebook-detail-tools-toggle${isNotebookToolsOpen ? " is-active" : ""}`}
-                type="button"
-                title={isNotebookToolsOpen ? "Hide notebook tools" : "Show notebook tools"}
-                aria-label={isNotebookToolsOpen ? "Hide notebook tools" : "Show notebook tools"}
-                aria-expanded={isNotebookToolsOpen}
-                aria-controls="message-tools-panel"
-                onClick={() => setIsNotebookToolsOpen((isOpen) => !isOpen)}
-              >
-                <ChevronDown className="notebook-detail-tools-icon" size={18} aria-hidden="true" />
-              </button>
-            </div>
-          </header>
+              <h1 className="notebook-detail-title">{selectedThread?.title ?? "Notebook"}</h1>
+              <div className="notebook-detail-actions">
+                {autosaveFeedback}
+                <button
+                  className="icon-button notebook-detail-new-note-button"
+                  type="button"
+                  title="Create new note"
+                  aria-label="Create new note"
+                  disabled={!selectedThread}
+                  onClick={() => void createNoteInSelectedNotebook()}
+                >
+                  <Plus size={18} aria-hidden="true" />
+                </button>
+                <button
+                  className="icon-button notebook-detail-notes-toggle"
+                  type="button"
+                  title={noteCollapseToggleLabel}
+                  aria-label={noteCollapseToggleLabel}
+                  disabled={visibleMessages.length === 0}
+                  onClick={toggleAllVisibleMessagesCollapsed}
+                >
+                  {areAllVisibleMessagesCollapsed ? (
+                    <UnfoldVertical size={18} aria-hidden="true" />
+                  ) : (
+                    <ListCollapse size={18} aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  className={`icon-button notebook-detail-tools-toggle${isNotebookToolsOpen ? " is-active" : ""}`}
+                  type="button"
+                  title={isNotebookToolsOpen ? "Hide notebook tools" : "Show notebook tools"}
+                  aria-label={isNotebookToolsOpen ? "Hide notebook tools" : "Show notebook tools"}
+                  aria-expanded={isNotebookToolsOpen}
+                  aria-controls="message-tools-panel"
+                  onClick={() => setIsNotebookToolsOpen((isOpen) => !isOpen)}
+                >
+                  <ChevronDown className="notebook-detail-tools-icon" size={18} aria-hidden="true" />
+                </button>
+              </div>
+            </header>
 
-          <Toolbar
-            selectedThread={selectedThread}
-            searchQuery={messageQuery}
-            canMergeMessages={messages.length > 1}
-            mergeMode={isMergingMessages}
-            selectedMergeCount={selectedMergeMessages.length}
-            canUndoNotebook={canUndoNotebook}
-            toolsOpen={isNotebookToolsOpen}
-            exportFormats={NOTEBOOK_EXPORT_FORMATTERS}
-            onSearchChange={setMessageQuery}
-            onToolsOpenChange={setIsNotebookToolsOpen}
-            onRenameThread={updateSelectedThreadTitle}
-            onRequestExport={(formatId) => void exportSelectedNotebook(formatId)}
-            onRequestPrintExport={() => void printSelectedNotebookAsPdf()}
-            onCreateNote={() => void createNoteInSelectedNotebook()}
-            onUndoNotebook={() => void undoNotebookChange()}
-            onOpenStandaloneWindow={() => void openStandaloneWindow()}
-            onStartMergeSelection={startMergeSelection}
-            onConfirmMergeSelection={() => void mergeSelectedMessages()}
-            onCancelMergeSelection={cancelMergeSelection}
-          />
+            <Toolbar
+              selectedThread={selectedThread}
+              searchQuery={messageQuery}
+              canMergeMessages={messages.length > 1}
+              mergeMode={isMergingMessages}
+              selectedMergeCount={selectedMergeMessages.length}
+              canUndoNotebook={canUndoNotebook}
+              toolsOpen={isNotebookToolsOpen}
+              exportFormats={NOTEBOOK_EXPORT_FORMATTERS}
+              onSearchChange={setMessageQuery}
+              onToolsOpenChange={setIsNotebookToolsOpen}
+              onRenameThread={updateSelectedThreadTitle}
+              onRequestExport={(formatId) => void exportSelectedNotebook(formatId)}
+              onRequestPrintExport={() => void printSelectedNotebookAsPdf()}
+              onCreateNote={() => void createNoteInSelectedNotebook()}
+              onUndoNotebook={() => void undoNotebookChange()}
+              onOpenStandaloneWindow={() => void openStandaloneWindow()}
+              onStartMergeSelection={startMergeSelection}
+              onConfirmMergeSelection={() => void mergeSelectedMessages()}
+              onCancelMergeSelection={cancelMergeSelection}
+            />
 
-          <section className="message-panel" aria-label="Saved messages">
-            <div className="message-feedback" aria-live="polite">
-              {status ? <span className="copy-status">{status}</span> : null}
-              {error ? <span className="error-text">{error}</span> : null}
-            </div>
+            <section className="message-panel" aria-label="Saved messages">
+              <div className="message-feedback" aria-live="polite">
+                {status ? <span className="copy-status">{status}</span> : null}
+                {error ? <span className="error-text">{error}</span> : null}
+              </div>
+              {pendingAiOperationProposal ? (
+                <AiOperationProposalReview
+                  proposal={pendingAiOperationProposal}
+                  onApply={() => void applyAiProposal(pendingAiOperationProposal)}
+                  onDismiss={() => void dismissAiProposal(pendingAiOperationProposal)}
+                />
+              ) : null}
+              <MessageList
+                messages={visibleMessages}
+                threadSource={selectedThread?.source}
+                undoableMessageIds={undoableMessageIds}
+                canUndoDeletedMessage={canUndoDeletedMessage}
+                selectedMessageIds={selectedMergeMessageIds}
+                exportTargetMessageId={exportTargetMessageId}
+                autoEditMessageId={pendingEditMessageId}
+                isSelectingForMerge={isMergingMessages}
+                collapsedMessageIds={collapsedMessageIds}
+                canReorderMessages={messages.length > 1 && !messageQuery.trim() && !isMergingMessages}
+                onAutoEditMessageHandled={() => setPendingEditMessageId(null)}
+                onCollapsedMessageIdsChange={setCollapsedMessageIds}
+                onToggleMessageSelection={toggleMergeMessageSelection}
+                onToggleExportTargetMessage={(message) => void toggleExportTargetMessage(message)}
+                onMoveMessageAfter={(message, afterMessageId) => void moveMessageAfter(message, afterMessageId)}
+                onMakeSelectionHeading={(message) => void makeSelectedTextHeading(message)}
+                onInsertMessage={insertMessageIntoChatGpt}
+                onInsertMessageSection={(message, headingIndex) =>
+                  void insertMessageSectionIntoChatGpt(message, headingIndex)
+                }
+                onUnmakeHeadingSection={(message, headingIndex) =>
+                  void unmakeMessageHeadingSection(message, headingIndex)
+                }
+                onMoveSelectedTextToSection={(message, headingIndex, selection) =>
+                  void moveSelectedTextToSection(message, headingIndex, selection)
+                }
+                onSaveSelectedTextEdit={(message, selectedText, replacementText) =>
+                  saveSelectedTextEdit(message, selectedText, replacementText)
+                }
+                onSaveMessageEdit={saveMessageEdit}
+                onInsertImage={insertImageIntoMessageDraft}
+                loadImageAssetUrl={loadImageAssetUrl}
+                onDeleteMessage={(message) => void deleteSingleMessage(message)}
+                onDeleteMessageSection={(message, headingIndex) => void deleteMessageSection(message, headingIndex)}
+                onDeleteSelectedText={removeSelectedText}
+                onUndoMessageEdit={undoMessageEdit}
+                onUndoDeletedMessage={() => void undoLastDeletedMessage()}
+              />
+            </section>
+          </>
+        ) : (
+          <section className="notebook-home-page" aria-label="Notebooks">
+            <ThreadList
+              threads={threads}
+              folders={folders}
+              filter={threadFilter}
+              newNotebookTitle={newNotebookTitle}
+              newFolderTitle={newFolderTitle}
+              themeToggle={themeToggle}
+              autosaveControl={autosaveFeedback}
+              cloudAccountControl={cloudAccountControl}
+              cloudBackupControl={cloudBackupControl}
+              selectedThreadId={selectedThreadId}
+              isFullPage
+              onFilterChange={setThreadFilter}
+              onNewNotebookTitleChange={setNewNotebookTitle}
+              onNewFolderTitleChange={setNewFolderTitle}
+              onCreateNotebook={addNotebook}
+              onCreateFolder={addFolder}
+              onSelectThread={(threadId) => void selectThread(threadId)}
+              onRenameThread={(threadId, title) => void updateSelectedThreadTitle(threadId, title)}
+              onRenameFolder={(folderId, title) => void updateFolderTitle(folderId, title)}
+              onMoveThreadToFolder={(thread, folderId) => void moveThreadFolder(thread, folderId)}
+              onMoveThreadAfter={(thread, afterThreadId) => void moveThreadAfter(thread, afterThreadId)}
+              onMoveFolderAfter={(folder, afterFolderId) => void moveFolderAfter(folder, afterFolderId)}
+              onDeleteThread={(thread) => void removeThread(thread)}
+              onDeleteFolder={(folder) => void removeFolder(folder)}
+              onExportBackup={() => void exportFullBackup()}
+              onImportBackup={(file) => void importFullBackup(file)}
+            />
             {pendingAiOperationProposal ? (
               <AiOperationProposalReview
                 proposal={pendingAiOperationProposal}
@@ -1777,88 +2617,12 @@ function App() {
                 onDismiss={() => void dismissAiProposal(pendingAiOperationProposal)}
               />
             ) : null}
-            <MessageList
-              messages={visibleMessages}
-              threadSource={selectedThread?.source}
-              undoableMessageIds={undoableMessageIds}
-              canUndoDeletedMessage={canUndoDeletedMessage}
-              selectedMessageIds={selectedMergeMessageIds}
-              exportTargetMessageId={exportTargetMessageId}
-              autoEditMessageId={pendingEditMessageId}
-              isSelectingForMerge={isMergingMessages}
-              collapsedMessageIds={collapsedMessageIds}
-              canReorderMessages={messages.length > 1 && !messageQuery.trim() && !isMergingMessages}
-              onAutoEditMessageHandled={() => setPendingEditMessageId(null)}
-              onCollapsedMessageIdsChange={setCollapsedMessageIds}
-              onToggleMessageSelection={toggleMergeMessageSelection}
-              onToggleExportTargetMessage={(message) => void toggleExportTargetMessage(message)}
-              onMoveMessageAfter={(message, afterMessageId) => void moveMessageAfter(message, afterMessageId)}
-              onMakeSelectionHeading={(message) => void makeSelectedTextHeading(message)}
-              onInsertMessage={insertMessageIntoChatGpt}
-              onInsertMessageSection={(message, headingIndex) =>
-                void insertMessageSectionIntoChatGpt(message, headingIndex)
-              }
-              onUnmakeHeadingSection={(message, headingIndex) =>
-                void unmakeMessageHeadingSection(message, headingIndex)
-              }
-              onMoveSelectedTextToSection={(message, headingIndex, selection) =>
-                void moveSelectedTextToSection(message, headingIndex, selection)
-              }
-              onSaveSelectedTextEdit={(message, selectedText, replacementText) =>
-                saveSelectedTextEdit(message, selectedText, replacementText)
-              }
-              onSaveMessageEdit={saveMessageEdit}
-              onInsertImage={insertImageIntoMessageDraft}
-              loadImageAssetUrl={loadImageAssetUrl}
-              onDeleteMessage={(message) => void deleteSingleMessage(message)}
-              onDeleteMessageSection={(message, headingIndex) => void deleteMessageSection(message, headingIndex)}
-              onDeleteSelectedText={removeSelectedText}
-              onUndoMessageEdit={undoMessageEdit}
-              onUndoDeletedMessage={() => void undoLastDeletedMessage()}
-            />
+            {feedback}
           </section>
-        </>
-      ) : (
-        <section className="notebook-home-page" aria-label="Notebooks">
-          <ThreadList
-            threads={threads}
-            folders={folders}
-            filter={threadFilter}
-            newNotebookTitle={newNotebookTitle}
-            newFolderTitle={newFolderTitle}
-            themeToggle={themeToggle}
-            autosaveControl={autosaveFeedback}
-            cloudAccountControl={cloudAccountControl}
-            cloudBackupControl={cloudBackupControl}
-            selectedThreadId={selectedThreadId}
-            isFullPage
-            onFilterChange={setThreadFilter}
-            onNewNotebookTitleChange={setNewNotebookTitle}
-            onNewFolderTitleChange={setNewFolderTitle}
-            onCreateNotebook={addNotebook}
-            onCreateFolder={addFolder}
-            onSelectThread={(threadId) => void selectThread(threadId)}
-            onRenameThread={(threadId, title) => void updateSelectedThreadTitle(threadId, title)}
-            onRenameFolder={(folderId, title) => void updateFolderTitle(folderId, title)}
-            onMoveThreadToFolder={(thread, folderId) => void moveThreadFolder(thread, folderId)}
-            onMoveThreadAfter={(thread, afterThreadId) => void moveThreadAfter(thread, afterThreadId)}
-            onMoveFolderAfter={(folder, afterFolderId) => void moveFolderAfter(folder, afterFolderId)}
-            onDeleteThread={(thread) => void removeThread(thread)}
-            onDeleteFolder={(folder) => void removeFolder(folder)}
-            onExportBackup={() => void exportFullBackup()}
-            onImportBackup={(file) => void importFullBackup(file)}
-          />
-          {pendingAiOperationProposal ? (
-            <AiOperationProposalReview
-              proposal={pendingAiOperationProposal}
-              onApply={() => void applyAiProposal(pendingAiOperationProposal)}
-              onDismiss={() => void dismissAiProposal(pendingAiOperationProposal)}
-            />
-          ) : null}
-          {feedback}
-        </section>
-      )}
-    </main>
+        )}
+      </main>
+      {cloudDialogContent}
+    </>
   );
 }
 
@@ -1895,6 +2659,10 @@ function getCloudBackupStatusText(status: CloudBackupStatusResponse): string {
     return "Uploading cloud backup";
   }
 
+  if (status.state === "locked") {
+    return status.cloudEncryptionEnabled ? "Cloud sync locked" : "Enable cloud encryption";
+  }
+
   if (status.state === "pending") {
     return "Cloud backup pending";
   }
@@ -1923,6 +2691,16 @@ function getCloudBackupTooltipText(status: CloudBackupStatusResponse): string {
     return "Uploading the latest local backup to Supabase.";
   }
 
+  if (status.state === "locked") {
+    if (!status.cloudEncryptionEnabled) {
+      return "Enable encrypted cloud sync before uploading backups to Supabase.";
+    }
+
+    return status.cloudLastDecryptError
+      ? `Unlock encrypted cloud sync to continue: ${status.cloudLastDecryptError}`
+      : "Unlock encrypted cloud sync to continue uploading and restoring cloud backups.";
+  }
+
   if (status.state === "pending") {
     return "Local changes are waiting for cloud backup.";
   }
@@ -1947,6 +2725,10 @@ function getCloudAccountLabel(status: CloudBackupStatusResponse): string {
 function CloudBackupControls({
   status,
   restoreInProgress,
+  onEnableEncryption,
+  onUnlock,
+  onLock,
+  onRotatePassphrase,
   onSignOut,
   onBackupNow,
   onRestoreLatest,
@@ -1954,6 +2736,10 @@ function CloudBackupControls({
 }: {
   status: CloudBackupStatusResponse;
   restoreInProgress: boolean;
+  onEnableEncryption(): void;
+  onUnlock(): void;
+  onLock(): void;
+  onRotatePassphrase(): void;
   onSignOut(): void;
   onBackupNow(): void;
   onRestoreLatest(): void;
@@ -1984,10 +2770,33 @@ function CloudBackupControls({
           Restoring notebook...
         </span>
       ) : null}
+      {!status.cloudEncryptionEnabled ? (
+        <button
+          className="icon-button cloud-backup-setup-button"
+          type="button"
+          title="Enable encrypted cloud sync"
+          aria-label="Enable encrypted cloud sync"
+          onClick={onEnableEncryption}
+        >
+          <Cloud size={15} aria-hidden="true" />
+        </button>
+      ) : null}
+      {status.cloudEncryptionEnabled && status.cloudEncryptionLocked ? (
+        <button
+          className="icon-button cloud-backup-unlock-button"
+          type="button"
+          title="Unlock encrypted cloud sync"
+          aria-label="Unlock encrypted cloud sync"
+          onClick={onUnlock}
+        >
+          <LogIn size={15} aria-hidden="true" />
+        </button>
+      ) : null}
       <button
         className={`autosave-status cloud-backup-status is-${status.state}`}
         type="button"
         aria-label={`${tooltip} Click to back up to cloud now.`}
+        disabled={!status.cloudEncryptionEnabled || status.cloudEncryptionLocked}
         onClick={onBackupNow}
       >
         <Cloud size={15} aria-hidden="true" />
@@ -2001,7 +2810,7 @@ function CloudBackupControls({
         type="button"
         title={restoreInProgress ? "Restoring latest cloud backup" : "Restore latest cloud backup"}
         aria-label={restoreInProgress ? "Restoring latest cloud backup" : "Restore latest cloud backup"}
-        disabled={restoreInProgress || !status.latestBackupId}
+        disabled={restoreInProgress || !status.latestBackupId || !status.cloudEncryptionEnabled}
         onClick={onRestoreLatest}
       >
         {restoreInProgress ? (
@@ -2010,6 +2819,28 @@ function CloudBackupControls({
           <CloudDownload size={15} aria-hidden="true" />
         )}
       </button>
+      {status.cloudEncryptionEnabled && !status.cloudEncryptionLocked ? (
+        <>
+          <button
+            className="icon-button cloud-backup-lock-button"
+            type="button"
+            title="Lock encrypted cloud sync"
+            aria-label="Lock encrypted cloud sync"
+            onClick={onLock}
+          >
+            <LogOut size={15} aria-hidden="true" />
+          </button>
+          <button
+            className="icon-button cloud-backup-rotate-passphrase-button"
+            type="button"
+            title="Rotate cloud passphrase"
+            aria-label="Rotate cloud passphrase"
+            onClick={onRotatePassphrase}
+          >
+            <RefreshCw size={15} aria-hidden="true" />
+          </button>
+        </>
+      ) : null}
       <button
         className="icon-button cloud-backup-sign-out-button"
         type="button"

@@ -9,6 +9,7 @@ import type {
   SavedMessage,
 } from "./models";
 import type { NotebookBackupSnapshot, RestoredNotebookBackupData, RestoredNotebookAsset } from "./notebookBackup";
+import { CLOUD_ENCRYPTION_VERSION } from "./cryptoCloud";
 
 const CLOUD_BACKUP_APP_ID = "chatgpt-notes-sidebar";
 export const CLOUD_BACKUP_VERSION = 2;
@@ -17,10 +18,29 @@ const CLOUD_EXCLUDED_SETTING_KEYS = new Set<AppSettingKey>([
   "lastCloudBackupRevision",
   "lastCloudBackupAt",
   "lastCloudBackupError",
+  "cloudEncryptionEnabled",
+  "cloudEncryptionVersion",
+  "cloudEncryptionLocked",
+  "cloudKeyVersion",
+  "cloudLastDecryptError",
 ]);
 
 export type CloudBackupAsset = Omit<NotebookAsset, "blob"> & {
   objectPath: string;
+  encrypted: boolean;
+  encryptionVersion?: number;
+  keyVersion?: number;
+  ivB64?: string;
+  wrappedDekB64?: string;
+  aad?: string;
+  plaintextSha256?: string;
+};
+
+export type CloudBackupEncryptionInfo = {
+  enabled: boolean;
+  version: number;
+  keyVersion: number;
+  scheme: string;
 };
 
 export type CloudBackupData = {
@@ -42,6 +62,7 @@ export type CloudBackupData = {
   settings: AppSetting[];
   aiOperationProposals: AiOperationProposal[];
   assets: CloudBackupAsset[];
+  encryption: CloudBackupEncryptionInfo | null;
 };
 
 export type CloudBackupFile = {
@@ -62,6 +83,12 @@ export type CloudBackupManifest = {
   byte_size: number;
   asset_count: number;
   encrypted: boolean;
+  encryption_version: number;
+  key_version: number;
+  snapshot_iv_b64: string;
+  snapshot_wrapped_dek_b64: string;
+  snapshot_aad: string;
+  plaintext_sha256: string;
   compression: "none";
   exported_at: string;
   created_at?: string;
@@ -79,7 +106,12 @@ export type CloudBackupListItem = {
 
 export function createCloudBackupData(
   snapshot: NotebookBackupSnapshot,
-  options: { userId: string; now?: number | Date; dataRevision?: number },
+  options: {
+    userId: string;
+    now?: number | Date;
+    dataRevision?: number;
+    encryption?: CloudBackupEncryptionInfo | null;
+  },
 ): CloudBackupData {
   const assets = snapshot.assets.map((asset) => ({
     id: asset.id,
@@ -93,7 +125,10 @@ export function createCloudBackupData(
     width: asset.width,
     height: asset.height,
     contentHash: asset.contentHash,
-    objectPath: getCloudAssetObjectPath(options.userId, asset),
+    objectPath: getCloudAssetObjectPath(options.userId, asset, { encrypted: Boolean(options.encryption?.enabled) }),
+    encrypted: Boolean(options.encryption?.enabled),
+    encryptionVersion: options.encryption?.enabled ? options.encryption.version : undefined,
+    keyVersion: options.encryption?.enabled ? options.encryption.keyVersion : undefined,
     createdAt: asset.createdAt,
     updatedAt: asset.updatedAt,
   }));
@@ -118,6 +153,7 @@ export function createCloudBackupData(
     settings,
     aiOperationProposals: snapshot.aiOperationProposals,
     assets,
+    encryption: options.encryption?.enabled ? options.encryption : null,
   };
 }
 
@@ -135,8 +171,16 @@ export function createCloudBackupManifests(input: {
   snapshotPath: string;
   snapshotSha256: string;
   byteSize: number;
+  encryption?: {
+    keyVersion: number;
+    snapshotIvB64: string;
+    snapshotWrappedDekB64: string;
+    snapshotAad: string;
+    plaintextSha256: string;
+  } | null;
 }): CloudBackupManifest[] {
   const backupDate = input.data.exportedAt.slice(0, 10);
+  const encrypted = Boolean(input.encryption);
   const common = {
     user_id: input.userId,
     data_revision: input.data.dataRevision,
@@ -145,7 +189,13 @@ export function createCloudBackupManifests(input: {
     snapshot_sha256: input.snapshotSha256,
     byte_size: input.byteSize,
     asset_count: input.data.assets.length,
-    encrypted: false,
+    encrypted,
+    encryption_version: encrypted ? CLOUD_ENCRYPTION_VERSION : 0,
+    key_version: input.encryption?.keyVersion ?? 0,
+    snapshot_iv_b64: input.encryption?.snapshotIvB64 ?? "",
+    snapshot_wrapped_dek_b64: input.encryption?.snapshotWrappedDekB64 ?? "",
+    snapshot_aad: input.encryption?.snapshotAad ?? "",
+    plaintext_sha256: input.encryption?.plaintextSha256 ?? "",
     compression: "none" as const,
     exported_at: input.data.exportedAt,
   };
@@ -180,6 +230,33 @@ export function parseCloudBackupJson(json: string): CloudBackupData {
   assertArray(parsed.aiOperationProposals, "aiOperationProposals");
   assertArray(parsed.assets, "assets");
 
+  const encryption = isRecord(parsed.encryption)
+    ? {
+        enabled: parsed.encryption.enabled === true,
+        version:
+          typeof parsed.encryption.version === "number" ? parsed.encryption.version : CLOUD_ENCRYPTION_VERSION,
+        keyVersion: typeof parsed.encryption.keyVersion === "number" ? parsed.encryption.keyVersion : 0,
+        scheme:
+          typeof parsed.encryption.scheme === "string" ? parsed.encryption.scheme : "aes-256-gcm+a256kw+pbkdf2-sha256",
+      }
+    : null;
+  const assets = (parsed.assets as unknown[]).map((asset, index) => {
+    if (!isRecord(asset)) {
+      throw new Error(`Cloud backup asset ${index} is invalid.`);
+    }
+
+    return {
+      ...(asset as Omit<CloudBackupAsset, "encrypted">),
+      encrypted: asset.encrypted === true,
+      encryptionVersion: typeof asset.encryptionVersion === "number" ? asset.encryptionVersion : undefined,
+      keyVersion: typeof asset.keyVersion === "number" ? asset.keyVersion : undefined,
+      ivB64: typeof asset.ivB64 === "string" ? asset.ivB64 : undefined,
+      wrappedDekB64: typeof asset.wrappedDekB64 === "string" ? asset.wrappedDekB64 : undefined,
+      aad: typeof asset.aad === "string" ? asset.aad : undefined,
+      plaintextSha256: typeof asset.plaintextSha256 === "string" ? asset.plaintextSha256 : undefined,
+    } satisfies CloudBackupAsset;
+  });
+
   return {
     app: CLOUD_BACKUP_APP_ID,
     backupVersion: CLOUD_BACKUP_VERSION,
@@ -191,14 +268,15 @@ export function parseCloudBackupJson(json: string): CloudBackupData {
       messages: parsed.messages.length,
       settings: parsed.settings.length,
       aiOperationProposals: parsed.aiOperationProposals.length,
-      assets: parsed.assets.length,
+      assets: assets.length,
     },
     folders: parsed.folders as NotebookFolder[],
     threads: parsed.threads as ChatGptThread[],
     messages: parsed.messages as SavedMessage[],
     settings: parsed.settings as AppSetting[],
     aiOperationProposals: parsed.aiOperationProposals as AiOperationProposal[],
-    assets: parsed.assets as CloudBackupAsset[],
+    assets,
+    encryption: encryption?.enabled ? encryption : null,
   };
 }
 
@@ -246,17 +324,28 @@ export function restoreCloudBackupData(
   };
 }
 
-export function getCloudAssetObjectPath(userId: string, asset: Pick<NotebookAsset, "contentHash" | "mimeType">): string {
-  return `${getCloudUserPathPrefix(userId)}/assets/${asset.contentHash}.${getImageExtension(asset.mimeType)}`;
+export function getCloudAssetObjectPath(
+  userId: string,
+  asset: Pick<NotebookAsset, "contentHash" | "mimeType">,
+  options?: { encrypted?: boolean },
+): string {
+  const extension = getImageExtension(asset.mimeType);
+  const suffix = options?.encrypted ? ".enc" : "";
+  return `${getCloudUserPathPrefix(userId)}/assets/${asset.contentHash}.${extension}${suffix}`;
 }
 
-export function getCloudSnapshotObjectPath(userId: string, data: Pick<CloudBackupData, "dataRevision" | "exportedAt">): string {
+export function getCloudSnapshotObjectPath(
+  userId: string,
+  data: Pick<CloudBackupData, "dataRevision" | "exportedAt">,
+  options?: { encrypted?: boolean },
+): string {
   const timestamp = data.exportedAt.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-  return `${getCloudUserPathPrefix(userId)}/snapshots/rev-${data.dataRevision}-${timestamp}.json`;
+  const suffix = options?.encrypted ? ".json.enc" : ".json";
+  return `${getCloudUserPathPrefix(userId)}/snapshots/rev-${data.dataRevision}-${timestamp}${suffix}`;
 }
 
-export function getCloudLatestSnapshotObjectPath(userId: string): string {
-  return `${getCloudUserPathPrefix(userId)}/snapshots/latest.json`;
+export function getCloudLatestSnapshotObjectPath(userId: string, options?: { encrypted?: boolean }): string {
+  return `${getCloudUserPathPrefix(userId)}/snapshots/latest${options?.encrypted ? ".enc" : ".json"}`;
 }
 
 export function getLatestCloudBackupId(userId: string): string {
@@ -327,4 +416,8 @@ function assertArray(value: unknown, field: string): asserts value is unknown[] 
   if (!Array.isArray(value)) {
     throw new Error(`Cloud backup is missing ${field}.`);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

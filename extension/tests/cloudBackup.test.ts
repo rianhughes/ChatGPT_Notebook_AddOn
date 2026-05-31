@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   createCloudBackupData,
   createCloudBackupFile,
+  createCloudBackupManifests,
   getCloudAssetObjectPath,
+  getCloudLatestSnapshotObjectPath,
+  getCloudSnapshotObjectPath,
   parseCloudBackupJson,
   restoreCloudBackupData,
 } from "../src/core/cloudBackup";
@@ -94,6 +97,59 @@ describe("cloud backup", () => {
     expect(getCloudAssetObjectPath("user-123", { contentHash: "abc", mimeType: "image/jpeg" })).toBe(
       "user-123/assets/abc.jpg",
     );
+  });
+
+  it("builds encrypted snapshot paths and manifest metadata", () => {
+    const data = createCloudBackupData(
+      {
+        folders: [folder()],
+        threads: [thread()],
+        messages: [message()],
+        settings: [],
+        aiOperationProposals: [],
+        assets: [asset()],
+      },
+      {
+        userId: "user-123",
+        now: Date.UTC(2026, 4, 31, 12, 0, 0),
+        dataRevision: 99,
+        encryption: {
+          enabled: true,
+          version: 1,
+          keyVersion: 3,
+          scheme: "aes-256-gcm+a256kw+pbkdf2-sha256",
+        },
+      },
+    );
+    const snapshotPath = getCloudSnapshotObjectPath("user-123", data, { encrypted: true });
+    const latestPath = getCloudLatestSnapshotObjectPath("user-123", { encrypted: true });
+    const manifests = createCloudBackupManifests({
+      userId: "user-123",
+      data,
+      snapshotPath,
+      snapshotSha256: "cipher-sha256",
+      byteSize: 1234,
+      encryption: {
+        keyVersion: 3,
+        snapshotIvB64: "iv",
+        snapshotWrappedDekB64: "wrapped",
+        snapshotAad: "aad",
+        plaintextSha256: "plain-sha",
+      },
+    });
+
+    expect(data.assets[0]?.objectPath.endsWith(".enc")).toBe(true);
+    expect(snapshotPath.endsWith(".json.enc")).toBe(true);
+    expect(latestPath.endsWith(".enc")).toBe(true);
+    expect(manifests[0]).toMatchObject({
+      encrypted: true,
+      encryption_version: 1,
+      key_version: 3,
+      snapshot_iv_b64: "iv",
+      snapshot_wrapped_dek_b64: "wrapped",
+      snapshot_aad: "aad",
+      plaintext_sha256: "plain-sha",
+    });
   });
 });
 

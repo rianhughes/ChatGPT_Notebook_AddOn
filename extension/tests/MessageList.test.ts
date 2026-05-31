@@ -231,13 +231,17 @@ describe("MessageList note headers", () => {
 
     const paragraphText = getFirstTextNode(host.querySelector(".markdown-paragraph"));
     const headingButton = host.querySelector<HTMLButtonElement>(".message-heading-button");
+    const boldButton = host.querySelector<HTMLButtonElement>(".message-bold-button");
     const sendButton = host.querySelector<HTMLButtonElement>(".message-insert-button");
     const range = document.createRange();
 
     expect(paragraphText).not.toBeNull();
     expect(headingButton).not.toBeNull();
+    expect(boldButton).not.toBeNull();
     expect(sendButton).not.toBeNull();
     expect(headingButton?.classList.contains("has-highlighted-selection")).toBe(false);
+    expect(boldButton?.classList.contains("has-highlighted-selection")).toBe(false);
+    expect(boldButton?.disabled).toBe(true);
     expect(sendButton?.classList.contains("has-highlighted-selection")).toBe(false);
 
     range.setStart(paragraphText!, 0);
@@ -251,6 +255,9 @@ describe("MessageList note headers", () => {
 
     expect(headingButton?.classList.contains("has-highlighted-selection")).toBe(true);
     expect(headingButton?.getAttribute("aria-label")).toBe("Make highlighted text a collapsible header");
+    expect(boldButton?.classList.contains("has-highlighted-selection")).toBe(true);
+    expect(boldButton?.getAttribute("aria-label")).toBe("Bold highlighted text");
+    expect(boldButton?.disabled).toBe(false);
     expect(sendButton?.classList.contains("has-highlighted-selection")).toBe(true);
     expect(sendButton?.getAttribute("aria-label")).toBe("Insert highlighted text into ChatGPT");
 
@@ -267,7 +274,72 @@ describe("MessageList note headers", () => {
     });
 
     expect(headingButton?.classList.contains("has-highlighted-selection")).toBe(false);
+    expect(boldButton?.classList.contains("has-highlighted-selection")).toBe(false);
+    expect(boldButton?.disabled).toBe(true);
     expect(sendButton?.classList.contains("has-highlighted-selection")).toBe(false);
+
+    await act(() => {
+      root.unmount();
+    });
+  });
+
+  it("wraps highlighted note text in bold markdown from the section action row", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const note = message("a", "Alpha beta");
+    const onSaveSelectedTextEdit = vi.fn(async () => undefined);
+
+    await act(() => {
+      root.render(
+        React.createElement(MessageList, {
+          messages: [note],
+          undoableMessageIds: new Set<string>(),
+          canUndoDeletedMessage: false,
+          selectedMessageIds: new Set<string>(),
+          isSelectingForMerge: false,
+          collapsedMessageIds: new Set<string>(),
+          canReorderMessages: false,
+          onCollapsedMessageIdsChange: vi.fn(),
+          onToggleMessageSelection: vi.fn(),
+          onMoveMessageAfter: vi.fn(),
+          onMakeSelectionHeading: vi.fn(),
+          onInsertMessage: vi.fn(),
+          onInsertMessageSection: vi.fn(),
+          onMoveSelectedTextToSection: vi.fn(),
+          onSaveSelectedTextEdit,
+          onSaveMessageEdit: vi.fn(async () => undefined),
+          onDeleteMessage: vi.fn(),
+          onDeleteMessageSection: vi.fn(),
+          onDeleteSelectedText: vi.fn(),
+          onUndoMessageEdit: vi.fn(),
+          onUndoDeletedMessage: vi.fn(),
+        }),
+      );
+    });
+
+    const paragraphText = getFirstTextNode(host.querySelector(".markdown-paragraph"));
+    const boldButton = host.querySelector<HTMLButtonElement>(".message-bold-button");
+    const range = document.createRange();
+
+    expect(paragraphText).not.toBeNull();
+    expect(boldButton).not.toBeNull();
+
+    range.setStart(paragraphText!, 0);
+    range.setEnd(paragraphText!, 5);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    await act(() => {
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+
+    await act(async () => {
+      boldButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSaveSelectedTextEdit).toHaveBeenCalledWith(note, "Alpha", "**Alpha**");
 
     await act(() => {
       root.unmount();
@@ -904,6 +976,7 @@ describe("MessageList note headers", () => {
     ]);
     expect(lowerButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "Collapse all sections",
+      "Highlight text to bold",
       "Highlight text to make a collapsible header",
     ]);
 

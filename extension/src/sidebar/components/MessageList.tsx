@@ -302,6 +302,24 @@ export function MessageList({
     setSelectedTextEdit(null);
   }
 
+  async function makeHighlightedTextBold(message: SavedMessage) {
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim() ?? "";
+    const messageElement = getMessageElement(message.id);
+
+    if (!selection || selection.isCollapsed || !selectedText || !messageElement) {
+      return;
+    }
+
+    if (!selectionBelongsToElement(selection, messageElement)) {
+      return;
+    }
+
+    const scrollSnapshot = captureScrollSnapshot(messageElement);
+    await onSaveSelectedTextEdit(message, selectedText, `**${selectedText}**`);
+    restoreScrollSnapshotAfterRender(scrollSnapshot);
+  }
+
   async function saveInlineMarkdownEdit(message: SavedMessage, contentMarkdown: string) {
     const currentMarkdown = message.contentMarkdown || message.contentText;
     const currentDefaultHeader = getDefaultNoteHeader(currentMarkdown);
@@ -714,6 +732,7 @@ export function MessageList({
               canUndoMessageEdit={undoableMessageIds.has(message.id)}
               canUndoDeletedMessage={canUndoDeletedMessage}
               onToggleHeadings={toggleHeadingCollapse}
+              onBoldSelection={makeHighlightedTextBold}
               onInsertMessage={onInsertMessage}
               onMakeSelectionHeading={onMakeSelectionHeading}
               onUnmakeHeadingSection={unmakeActiveHeadingSection}

@@ -63,6 +63,11 @@ export type NotebookCloudBackupMetadata = {
   lastCloudBackupRevision: number;
   lastCloudBackupAt: string | null;
   lastCloudBackupError: string | null;
+  cloudEncryptionEnabled: boolean;
+  cloudEncryptionVersion: number;
+  cloudEncryptionLocked: boolean;
+  cloudKeyVersion: number;
+  cloudLastDecryptError: string | null;
 };
 
 export type StoredNotebookBackupInput = Omit<StoredNotebookBackup, "createdAt" | "updatedAt">;
@@ -131,6 +136,11 @@ export async function getNotebookCloudBackupMetadata(): Promise<NotebookCloudBac
     "lastCloudBackupRevision",
     "lastCloudBackupAt",
     "lastCloudBackupError",
+    "cloudEncryptionEnabled",
+    "cloudEncryptionVersion",
+    "cloudEncryptionLocked",
+    "cloudKeyVersion",
+    "cloudLastDecryptError",
   ]);
 
   return {
@@ -138,7 +148,64 @@ export async function getNotebookCloudBackupMetadata(): Promise<NotebookCloudBac
     lastCloudBackupRevision: toSettingNumber(settings[1]?.value),
     lastCloudBackupAt: settings[2]?.value ?? null,
     lastCloudBackupError: settings[3]?.value ?? null,
+    cloudEncryptionEnabled: toSettingBoolean(settings[4]?.value),
+    cloudEncryptionVersion: toSettingNumber(settings[5]?.value),
+    cloudEncryptionLocked: toSettingBoolean(settings[6]?.value),
+    cloudKeyVersion: toSettingNumber(settings[7]?.value),
+    cloudLastDecryptError: settings[8]?.value ?? null,
   };
+}
+
+export async function markCloudEncryptionConfigured(input: {
+  enabled: boolean;
+  version: number;
+  keyVersion: number;
+  locked: boolean;
+}): Promise<void> {
+  const timestamp = Date.now();
+
+  await notesDb.settings.bulkPut([
+    {
+      key: "cloudEncryptionEnabled",
+      value: input.enabled ? "1" : "0",
+      updatedAt: timestamp,
+    },
+    {
+      key: "cloudEncryptionVersion",
+      value: String(input.version),
+      updatedAt: timestamp,
+    },
+    {
+      key: "cloudKeyVersion",
+      value: String(input.keyVersion),
+      updatedAt: timestamp,
+    },
+    {
+      key: "cloudEncryptionLocked",
+      value: input.locked ? "1" : "0",
+      updatedAt: timestamp,
+    },
+  ]);
+}
+
+export async function markCloudEncryptionLocked(locked: boolean): Promise<void> {
+  await notesDb.settings.put({
+    key: "cloudEncryptionLocked",
+    value: locked ? "1" : "0",
+    updatedAt: Date.now(),
+  });
+}
+
+export async function markCloudLastDecryptError(error: string): Promise<void> {
+  await notesDb.settings.put({
+    key: "cloudLastDecryptError",
+    value: error,
+    updatedAt: Date.now(),
+  });
+}
+
+export async function clearCloudLastDecryptError(): Promise<void> {
+  await notesDb.settings.delete("cloudLastDecryptError");
 }
 
 export async function markNotebookBackupSucceeded(input: {
@@ -1713,6 +1780,10 @@ async function getNumericSettingInTransaction(key: AppSetting["key"]): Promise<n
 function toSettingNumber(value: string | null | undefined): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toSettingBoolean(value: string | null | undefined): boolean {
+  return value === "1" || value === "true";
 }
 
 async function appendMessageInTransaction(

@@ -1,7 +1,8 @@
 import browser from "../browser/extensionApi";
 import type { CloudBackupStatusResponse } from "../core/ports";
 import { getLatestCloudBackupId } from "../core/cloudBackup";
-import { getNotebookCloudBackupMetadata } from "../core/repository";
+import { getNotebookCloudBackupMetadata, markCloudEncryptionLocked } from "../core/repository";
+import { clearCloudSyncSessionKey, getCloudKeyringStatusForUser } from "./cloudKeyring";
 import { getSupabaseClient, getSupabaseCloudConfig, getSupabaseSession } from "./cloudSupabase";
 
 export async function getCloudAuthStatus(): Promise<CloudBackupStatusResponse> {
@@ -18,6 +19,11 @@ export async function getCloudAuthStatus(): Promise<CloudBackupStatusResponse> {
       lastCloudBackupRevision: metadata.lastCloudBackupRevision,
       lastCloudBackupAt: metadata.lastCloudBackupAt,
       lastCloudBackupError: metadata.lastCloudBackupError,
+      cloudEncryptionEnabled: metadata.cloudEncryptionEnabled,
+      cloudEncryptionLocked: metadata.cloudEncryptionEnabled ? metadata.cloudEncryptionLocked : false,
+      cloudEncryptionVersion: metadata.cloudEncryptionVersion,
+      cloudKeyVersion: metadata.cloudKeyVersion,
+      cloudLastDecryptError: metadata.cloudLastDecryptError,
       latestBackupId: null,
     };
   }
@@ -35,15 +41,42 @@ export async function getCloudAuthStatus(): Promise<CloudBackupStatusResponse> {
       lastCloudBackupRevision: metadata.lastCloudBackupRevision,
       lastCloudBackupAt: metadata.lastCloudBackupAt,
       lastCloudBackupError: metadata.lastCloudBackupError,
+      cloudEncryptionEnabled: metadata.cloudEncryptionEnabled,
+      cloudEncryptionLocked: metadata.cloudEncryptionEnabled ? true : false,
+      cloudEncryptionVersion: metadata.cloudEncryptionVersion,
+      cloudKeyVersion: metadata.cloudKeyVersion,
+      cloudLastDecryptError: metadata.cloudLastDecryptError,
       latestBackupId: null,
     };
   }
 
+  let keyringStatus = {
+    keyringPresent: false,
+    keyVersion: metadata.cloudKeyVersion,
+    unlocked: false,
+  };
+
+  try {
+    keyringStatus = await getCloudKeyringStatusForUser(userId);
+  } catch {
+    // Keep cloud status usable even if keyring lookup fails.
+  }
+
+  const cloudEncryptionEnabled = metadata.cloudEncryptionEnabled || keyringStatus.keyringPresent;
+  const cloudKeyVersion = keyringStatus.keyVersion || metadata.cloudKeyVersion;
+  const cloudEncryptionLocked = cloudEncryptionEnabled ? !keyringStatus.unlocked : false;
+  const state = !cloudEncryptionEnabled
+    ? "locked"
+    : cloudEncryptionLocked
+      ? "locked"
+      : metadata.lastCloudBackupError && metadata.dataRevision > metadata.lastCloudBackupRevision
+        ? "error"
+        : "idle";
+
   return {
     configured: true,
     signedIn: true,
-    state:
-      metadata.lastCloudBackupError && metadata.dataRevision > metadata.lastCloudBackupRevision ? "error" : "idle",
+    state,
     user: {
       id: userId,
       email: session.user.email ?? null,
@@ -52,6 +85,11 @@ export async function getCloudAuthStatus(): Promise<CloudBackupStatusResponse> {
     lastCloudBackupRevision: metadata.lastCloudBackupRevision,
     lastCloudBackupAt: metadata.lastCloudBackupAt,
     lastCloudBackupError: metadata.lastCloudBackupError,
+    cloudEncryptionEnabled,
+    cloudEncryptionLocked,
+    cloudEncryptionVersion: metadata.cloudEncryptionVersion,
+    cloudKeyVersion,
+    cloudLastDecryptError: metadata.cloudLastDecryptError,
     latestBackupId: getLatestCloudBackupId(userId),
   };
 }
@@ -119,6 +157,9 @@ export async function startGoogleSignIn(): Promise<CloudBackupStatusResponse> {
 
 export async function signOutCloud(): Promise<CloudBackupStatusResponse> {
   const supabase = getSupabaseClient();
+
+  await clearCloudSyncSessionKey();
+  await markCloudEncryptionLocked(true);
 
   if (!supabase) {
     return getCloudAuthStatus();

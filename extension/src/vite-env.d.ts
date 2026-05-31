@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_ANON_KEY?: string;
   readonly VITE_SUPABASE_BACKUP_BUCKET?: string;
   readonly VITE_SUPABASE_BACKUP_TABLE?: string;
+  readonly VITE_SUPABASE_KEYRING_TABLE?: string;
+  readonly VITE_ENCRYPTED_CLOUD_SYNC_V1?: string;
 }
 
 interface ImportMeta {

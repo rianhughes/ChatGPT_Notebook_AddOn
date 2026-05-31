@@ -208,6 +208,151 @@ button {
   background: var(--color-surface);
 }
 
+.cloud-sync-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: color-mix(in srgb, #000000 56%, transparent);
+}
+
+.cloud-sync-dialog {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-strong);
+  box-shadow:
+    0 16px 44px color-mix(in srgb, #000000 36%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.cloud-sync-dialog-header {
+  display: grid;
+  gap: 8px;
+  border-bottom: 1px solid var(--color-border);
+  padding: 16px 18px 14px;
+}
+
+.cloud-sync-dialog-title {
+  margin: 0;
+  color: var(--color-heading);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.cloud-sync-dialog-description {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.cloud-sync-dialog-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px 18px 18px;
+}
+
+.cloud-sync-dialog-field {
+  display: grid;
+  gap: 6px;
+}
+
+.cloud-sync-dialog-label {
+  color: var(--color-heading);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.cloud-sync-dialog-recovery {
+  min-height: 82px;
+  resize: vertical;
+  font-family: var(--font-code);
+  line-height: 1.45;
+}
+
+.cloud-sync-dialog-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cloud-sync-dialog-word-check-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.cloud-sync-dialog-methods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cloud-sync-dialog-method-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: var(--color-surface-muted);
+  color: var(--color-control-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.cloud-sync-dialog-method-option input {
+  margin: 0;
+}
+
+.cloud-sync-dialog-hint {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cloud-sync-dialog-error {
+  margin: 0;
+  color: var(--color-error);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.cloud-sync-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.cloud-sync-dialog-submit[disabled] {
+  opacity: 0.75;
+}
+
+@media (max-width: 640px) {
+  .cloud-sync-dialog-overlay {
+    align-items: flex-end;
+    padding: 10px;
+  }
+
+  .cloud-sync-dialog {
+    width: 100%;
+    max-height: calc(100vh - 20px);
+    border-radius: 12px;
+  }
+
+  .cloud-sync-dialog-word-check-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .thread-panel,
 .message-toolbar {
   border-bottom: 1px solid var(--color-border);
@@ -1177,6 +1322,7 @@ button {
 }
 
 .message-edit-button,
+.message-bold-button,
 .message-heading-button,
 .message-insert-button {
   transition:
@@ -1185,6 +1331,7 @@ button {
 }
 
 .message-edit-button.has-highlighted-selection,
+.message-bold-button.has-highlighted-selection,
 .message-heading-button.has-highlighted-selection,
 .message-insert-button.has-highlighted-selection {
   background: var(--color-accent);
